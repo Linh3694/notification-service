@@ -18,6 +18,11 @@ Microservice quản lý thông báo và notifications tương thích với Frapp
 - ✅ Multi-channel delivery (push, email, system)
 - ✅ Real-time notification broadcasting
 - ✅ Notification cleanup và retention
+- ✅ **Cross-service communication** với Redis pub/sub
+- ✅ **Real-time event handling** từ ticket-service và frappe
+- ✅ **User presence tracking** và online status
+- ✅ **Notification delivery tracking** và analytics
+- ✅ **Broadcast messaging** cho system-wide notifications
 
 ## Cài đặt
 
@@ -83,6 +88,14 @@ npm start
 - `GET /api/resource/Notification%20Log` - Lấy notification logs
 - `PUT /api/resource/Notification%20Log/:name` - Cập nhật notification log
 
+### Cross-Service Communication API
+
+- `POST /api/notifications/test/ticket-service` - Test gửi message đến ticket-service
+- `POST /api/notifications/test/frappe` - Test gửi message đến frappe
+- `POST /api/notifications/test/broadcast` - Test broadcast message
+- `GET /api/notifications/delivery-status/:notificationId` - Kiểm tra delivery status
+- `GET /api/notifications/user-status/:userId` - Kiểm tra user online status
+
 ## Socket.IO Events
 
 ### Client to Server
@@ -105,6 +118,7 @@ npm start
 Service sử dụng các DocTypes:
 
 ### ERP Notification
+
 - `name` - ID notification (required)
 - `title` - Tiêu đề notification
 - `message` - Nội dung notification
@@ -118,6 +132,7 @@ Service sử dụng các DocTypes:
 - `sent_at` - Thời gian gửi
 
 ### Notification Log (Frappe)
+
 - `name` - ID log entry
 - `subject` - Tiêu đề
 - `email_content` - Nội dung email
@@ -131,16 +146,19 @@ Service sử dụng các DocTypes:
 ## Notification Channels
 
 ### Push Notifications
+
 - **Expo**: Hỗ trợ React Native apps
 - **FCM**: Hỗ trợ Android/iOS native apps
 - **Web Push**: Hỗ trợ web browsers
 
 ### Email Notifications
+
 - **SMTP**: Gửi email qua SMTP server
 - **Templates**: Hỗ trợ email templates
 - **HTML Content**: Hỗ trợ HTML formatting
 
 ### System Notifications
+
 - **Frappe UI**: Hiển thị trong Frappe interface
 - **Real-time**: Socket.IO real-time updates
 - **In-app**: Notifications trong ứng dụng
@@ -191,4 +209,4 @@ RUN npm install --production
 COPY . .
 EXPOSE 5003
 CMD ["npm", "start"]
-``` 
+```

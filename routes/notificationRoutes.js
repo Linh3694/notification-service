@@ -1,256 +1,134 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const notificationController = require('../controllers/notificationController');
+const notificationController = require("../../controllers/Notification/notificationController");
+const authenticate = require("../../middleware/authMiddleware");
+const crossServiceCommunication = require("../../services/crossServiceCommunication");
 
-// Standard REST API routes
-router.post('/create', notificationController.createNotification.bind(notificationController));
-router.get('/user/:user_id', notificationController.getUserNotifications.bind(notificationController));
-router.put('/mark-read/:notification_name', notificationController.markAsRead.bind(notificationController));
-router.post('/register-token', notificationController.registerPushToken.bind(notificationController));
-router.post('/bulk-send', notificationController.bulkSendNotifications.bind(notificationController));
-router.get('/stats', notificationController.getNotificationStats.bind(notificationController));
+// Đăng ký thiết bị để nhận thông báo
+router.post("/register-device", authenticate, notificationController.registerDevice);
 
-// Frappe-compatible API routes
+// Hủy đăng ký thiết bị
+router.post("/unregister-device", authenticate, notificationController.unregisterDevice);
 
-// Frappe method calls
-router.post('/erp.common.doctype.erp_notification.erp_notification.create_notification', 
-  notificationController.createNotification.bind(notificationController));
+// Lấy danh sách thông báo
+router.get("/", authenticate, notificationController.getNotifications);
 
-router.get('/erp.common.doctype.erp_notification.erp_notification.get_user_notifications', 
-  notificationController.getUserNotifications.bind(notificationController));
+// Đánh dấu thông báo đã đọc
+router.put("/:notificationId/read", authenticate, notificationController.markAsRead);
 
-router.post('/erp.common.doctype.erp_notification.erp_notification.mark_notification_as_read', 
-  notificationController.markAsRead.bind(notificationController));
+// Đánh dấu tất cả thông báo đã đọc
+router.put("/mark-all-read", authenticate, notificationController.markAllAsRead);
 
-// Frappe resource API
-router.get('/ERP%20Notification', async (req, res) => {
+// Xóa thông báo
+router.delete("/:notificationId", authenticate, notificationController.deleteNotification);
+
+// Xóa tất cả thông báo
+router.delete("/", authenticate, notificationController.deleteAllNotifications);
+
+// Test cross-service communication
+router.post("/test/ticket-service", async (req, res) => {
   try {
-    const { filters, fields, limit_start, limit_page_length, order_by } = req.query;
-    const database = require('../config/database');
+    const { event, data } = req.body;
     
-    let parsedFilters = {};
-    if (filters) {
-      try {
-        parsedFilters = JSON.parse(filters);
-      } catch (e) {
-        parsedFilters = req.query;
-      }
-    }
-
-    const notifications = await database.getAll('ERP Notification',
-      parsedFilters,
-      fields || '*',
-      order_by || 'modified DESC',
-      limit_page_length || 50
-    );
-
-    res.json({
-      message: notifications,
-      status: 'success'
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
-  }
-});
-
-router.get('/ERP%20Notification/:name', async (req, res) => {
-  try {
-    const database = require('../config/database');
-    const notification = await database.get('ERP Notification', req.params.name);
+    await crossServiceCommunication.sendToTicketService(event, data);
     
-    if (!notification) {
-      return res.status(404).json({
-        error: 'Record not found',
-        message: `ERP Notification ${req.params.name} not found`
-      });
-    }
-
-    res.json({
-      message: notification,
-      status: 'success'
+    res.status(200).json({
+      success: true,
+      message: `Message sent to ticket-service: ${event}`,
+      data: data
     });
   } catch (error) {
+    console.error('Error sending message to ticket-service:', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
+      success: false,
+      message: 'Failed to send message to ticket-service',
+      error: error.message
     });
   }
 });
 
-router.post('/ERP%20Notification', async (req, res) => {
+router.post("/test/frappe", async (req, res) => {
   try {
-    const database = require('../config/database');
-    const data = req.body;
+    const { event, data } = req.body;
     
-    // Add required Frappe fields
-    data.name = data.name || `NOTIF-${Date.now()}`;
-    data.creation = new Date().toISOString();
-    data.modified = new Date().toISOString();
-    data.owner = 'Administrator';
-    data.modified_by = 'Administrator';
-    data.docstatus = 0;
-    data.idx = 0;
-
-    await database.insert('ERP Notification', data);
-
-    // Send notification if status is not draft
-    if (data.status !== 'draft') {
-      await notificationController.sendNotification(data);
-    }
-
-    res.json({
-      message: data,
-      status: 'success'
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
-  }
-});
-
-router.put('/ERP%20Notification/:name', async (req, res) => {
-  try {
-    const database = require('../config/database');
-    const data = req.body;
+    await crossServiceCommunication.sendToFrappe(event, data);
     
-    // Update modified timestamp
-    data.modified = new Date().toISOString();
-    data.modified_by = 'Administrator';
-
-    await database.update('ERP Notification', req.params.name, data);
-
-    // Get updated record
-    const updated = await database.get('ERP Notification', req.params.name);
-
-    res.json({
-      message: updated,
-      status: 'success'
+    res.status(200).json({
+      success: true,
+      message: `Message sent to frappe: ${event}`,
+      data: data
     });
   } catch (error) {
+    console.error('Error sending message to frappe:', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
+      success: false,
+      message: 'Failed to send message to frappe',
+      error: error.message
     });
   }
 });
 
-router.delete('/ERP%20Notification/:name', async (req, res) => {
+router.post("/test/broadcast", async (req, res) => {
   try {
-    const database = require('../config/database');
-    await database.delete('ERP Notification', req.params.name);
-
-    res.json({
-      message: 'Record deleted successfully',
-      status: 'success'
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
-  }
-});
-
-// Notification Log API (Frappe compatible)
-router.get('/Notification%20Log', async (req, res) => {
-  try {
-    const { filters, fields, limit_start, limit_page_length, order_by } = req.query;
-    const database = require('../config/database');
+    const { event, data } = req.body;
     
-    let parsedFilters = {};
-    if (filters) {
-      try {
-        parsedFilters = JSON.parse(filters);
-      } catch (e) {
-        parsedFilters = req.query;
-      }
-    }
-
-    const logs = await database.getAll('Notification Log',
-      parsedFilters,
-      fields || '*',
-      order_by || 'creation DESC',
-      limit_page_length || 50
-    );
-
-    res.json({
-      message: logs,
-      status: 'success'
-    });
-  } catch (error) {
-    res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
-    });
-  }
-});
-
-router.put('/Notification%20Log/:name', async (req, res) => {
-  try {
-    const database = require('../config/database');
-    const data = req.body;
+    await crossServiceCommunication.sendToAllServices(event, data);
     
-    data.modified = new Date().toISOString();
-    await database.update('Notification Log', req.params.name, data);
-
-    const updated = await database.get('Notification Log', req.params.name);
-
-    res.json({
-      message: updated,
-      status: 'success'
+    res.status(200).json({
+      success: true,
+      message: `Message broadcasted to all services: ${event}`,
+      data: data
     });
   } catch (error) {
+    console.error('Error broadcasting message:', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
+      success: false,
+      message: 'Failed to broadcast message',
+      error: error.message
     });
   }
 });
 
-// Real-time notification endpoints
-router.post('/broadcast', async (req, res) => {
+// Get notification delivery status
+router.get("/delivery-status/:notificationId", async (req, res) => {
   try {
-    const { title, message, recipients = 'all', type = 'system' } = req.body;
+    const { notificationId } = req.params;
+    const status = await require("../../config/redis").getNotificationDeliveryStatus(notificationId);
     
-    // Create and send notification
-    const notificationData = {
-      title,
-      message,
-      recipients: recipients === 'all' ? [] : recipients,
-      recipient_type: recipients === 'all' ? 'all' : 'specific',
-      notification_type: type,
-      channel: 'push',
-      priority: 'medium'
-    };
-
-    // Use the controller to create and send
-    const mockReq = { body: notificationData, user: { name: 'Administrator' } };
-    const mockRes = {
-      json: (data) => res.json(data),
-      status: (code) => ({ json: (data) => res.status(code).json(data) })
-    };
-
-    await notificationController.createNotification(mockReq, mockRes);
+    res.status(200).json({
+      success: true,
+      notificationId,
+      deliveryStatus: status
+    });
   } catch (error) {
+    console.error('Error getting delivery status:', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: error.message
+      success: false,
+      message: 'Failed to get delivery status',
+      error: error.message
     });
   }
 });
 
-// Health check
-router.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    service: 'notification-routes',
-    timestamp: new Date().toISOString()
-  });
+// Get user online status
+router.get("/user-status/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const isOnline = await require("../../config/redis").isUserOnline(userId);
+    
+    res.status(200).json({
+      success: true,
+      userId,
+      isOnline
+    });
+  } catch (error) {
+    console.error('Error getting user status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get user status',
+      error: error.message
+    });
+  }
 });
 
-module.exports = router;
+module.exports = router; 

@@ -9,6 +9,7 @@ require("dotenv").config({ path: './config.env' });
 // Import configurations
 const database = require('./config/database');
 const redisClient = require('./config/redis');
+const crossServiceCommunication = require('./services/crossServiceCommunication');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,6 +30,10 @@ const io = new Server(server, {
     
     io.adapter(createAdapter(redisClient.getPubClient(), redisClient.getSubClient()));
     console.log('✅ [Notification Service] Redis adapter setup complete');
+    
+    // Initialize cross-service communication
+    await crossServiceCommunication.initializeSubscriptions();
+    
   } catch (error) {
     console.warn('⚠️ [Notification Service] Redis adapter setup failed:', error.message);
     console.warn('⚠️ [Notification Service] Continuing without Redis adapter (single instance)');
@@ -113,6 +118,8 @@ io.on('connection', (socket) => {
     const { userId } = data;
     if (userId) {
       socket.join(userId);
+      // Track user online status
+      redisClient.setUserOnline(userId, socket.id);
       console.log(`📱 [Notification Service] User ${userId} joined personal room`);
     }
   });
@@ -122,6 +129,8 @@ io.on('connection', (socket) => {
     const { userId } = data;
     if (userId) {
       socket.leave(userId);
+      // Track user offline status
+      redisClient.setUserOffline(userId);
       console.log(`📱 [Notification Service] User ${userId} left personal room`);
     }
   });
@@ -139,6 +148,9 @@ io.on('connection', (socket) => {
       
       // Invalidate cache
       await redisClient.invalidateUserNotificationsCache(userId);
+      
+      // Track delivery status
+      await redisClient.trackNotificationDelivery(notificationId, userId, 'read');
       
       // Broadcast to user's other devices
       socket.to(userId).emit('notification_read', { notificationId });

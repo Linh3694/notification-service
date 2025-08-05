@@ -77,6 +77,13 @@ class RedisClient {
     });
   }
 
+  // Multi-channel subscription
+  async subscribeToChannels(channels, callback) {
+    for (const channel of channels) {
+      await this.subscribe(channel, callback);
+    }
+  }
+
   // Notification-specific cache methods
   async cacheUserNotifications(userId, notifications) {
     const key = `notifications:user:${userId}`;
@@ -121,6 +128,69 @@ class RedisClient {
 
   async getQueueLength() {
     return await this.client.lLen('notification_queue');
+  }
+
+  // Cross-service communication channels
+  async publishToTicketService(event, data) {
+    const message = {
+      service: 'notification-service',
+      event,
+      data,
+      timestamp: new Date().toISOString()
+    };
+    await this.publish('ticket-service', message);
+  }
+
+  async publishToFrappe(event, data) {
+    const message = {
+      service: 'notification-service',
+      event,
+      data,
+      timestamp: new Date().toISOString()
+    };
+    await this.publish('frappe', message);
+  }
+
+  async publishToAllServices(event, data) {
+    const message = {
+      service: 'notification-service',
+      event,
+      data,
+      timestamp: new Date().toISOString()
+    };
+    await this.publish('broadcast', message);
+  }
+
+  // User presence tracking
+  async setUserOnline(userId, socketId) {
+    const key = `user:online:${userId}`;
+    await this.set(key, { socketId, timestamp: new Date().toISOString() }, 3600); // 1 hour TTL
+  }
+
+  async setUserOffline(userId) {
+    const key = `user:online:${userId}`;
+    await this.del(key);
+  }
+
+  async isUserOnline(userId) {
+    const key = `user:online:${userId}`;
+    const data = await this.get(key);
+    return !!data;
+  }
+
+  // Notification delivery tracking
+  async trackNotificationDelivery(notificationId, userId, status = 'sent') {
+    const key = `notification:delivery:${notificationId}`;
+    await this.client.hSet(key, userId, JSON.stringify({
+      status,
+      timestamp: new Date().toISOString()
+    }));
+    await this.client.expire(key, 86400); // 24 hours TTL
+  }
+
+  async getNotificationDeliveryStatus(notificationId) {
+    const key = `notification:delivery:${notificationId}`;
+    return await this.client.hGetAll(key);
   }
 
   getPubClient() {
