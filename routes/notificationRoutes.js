@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const notificationController = require("../controllers/notificationController");
-// const authenticate = require("../../middleware/authMiddleware");
-const crossServiceCommunication = require("../../services/crossServiceCommunication");
+const authenticate = require("../middleware/authMiddleware");
+const crossServiceCommunication = require("../services/crossServiceCommunication");
 
 // Đăng ký thiết bị để nhận thông báo
 router.post("/register-device", authenticate, notificationController.registerDevice);
@@ -93,7 +93,7 @@ router.post("/test/broadcast", async (req, res) => {
 router.get("/delivery-status/:notificationId", async (req, res) => {
   try {
     const { notificationId } = req.params;
-    const status = await require("../../config/redis").getNotificationDeliveryStatus(notificationId);
+    const status = await require("../config/redis").getNotificationDeliveryStatus(notificationId);
     
     res.status(200).json({
       success: true,
