@@ -4,23 +4,37 @@ const notificationController = require('../controllers/notificationController');
 class CrossServiceCommunication {
   constructor() {
     this.subscribedChannels = [];
+    this.isInitialized = false;
   }
 
   // Khởi tạo subscription cho các channels
   async initializeSubscriptions() {
+    if (this.isInitialized) {
+      console.log('🔗 [Notification Service] Cross-service communication already initialized');
+      return;
+    }
+
     const channels = [
       'ticket-service',
       'frappe',
       'broadcast',
-      'notification-service'
+      'notification-service',
+      'chat-service',
+      'workspace-backend'
     ];
 
     console.log('🔗 [Notification Service] Subscribing to channels:', channels);
     
-    await redisClient.subscribeToChannels(channels, this.handleMessage.bind(this));
-    this.subscribedChannels = channels;
-    
-    console.log('✅ [Notification Service] Cross-service communication initialized');
+    try {
+      await redisClient.subscribeToChannels(channels, this.handleMessage.bind(this));
+      this.subscribedChannels = channels;
+      this.isInitialized = true;
+      
+      console.log('✅ [Notification Service] Cross-service communication initialized');
+    } catch (error) {
+      console.error('❌ [Notification Service] Failed to initialize cross-service communication:', error);
+      throw error;
+    }
   }
 
   // Xử lý message từ các services khác
@@ -41,6 +55,12 @@ class CrossServiceCommunication {
           break;
         case 'broadcast':
           await this.handleBroadcastMessage(message);
+          break;
+        case 'chat-service':
+          await this.handleChatServiceMessage(message);
+          break;
+        case 'workspace-backend':
+          await this.handleWorkspaceBackendMessage(message);
           break;
         default:
           console.log('⚠️ [Notification Service] Unknown service:', message.service);
@@ -100,6 +120,44 @@ class CrossServiceCommunication {
         break;
       default:
         console.log('⚠️ [Notification Service] Unknown frappe event:', event);
+    }
+  }
+
+  // Xử lý message từ chat-service
+  async handleChatServiceMessage(message) {
+    const { event, data } = message;
+
+    switch (event) {
+      case 'message_sent':
+        await this.handleChatMessageSent(data);
+        break;
+      case 'user_online':
+        await this.handleUserOnline(data);
+        break;
+      case 'user_offline':
+        await this.handleUserOffline(data);
+        break;
+      default:
+        console.log('⚠️ [Notification Service] Unknown chat event:', event);
+    }
+  }
+
+  // Xử lý message từ workspace-backend
+  async handleWorkspaceBackendMessage(message) {
+    const { event, data } = message;
+
+    switch (event) {
+      case 'notification_sent':
+        await this.handleNotificationSent(data);
+        break;
+      case 'user_status_changed':
+        await this.handleUserStatusChanged(data);
+        break;
+      case 'system_event':
+        await this.handleSystemEvent(data);
+        break;
+      default:
+        console.log('⚠️ [Notification Service] Unknown workspace-backend event:', event);
     }
   }
 
@@ -245,6 +303,68 @@ class CrossServiceCommunication {
         messageId: data.messageId,
         senderId: data.senderId
       }
+    };
+
+    await this.sendNotification(notificationData);
+  }
+
+  // Chat event handlers
+  async handleChatMessageSent(data) {
+    console.log('💬 [Notification Service] Handling chat message sent');
+    
+    const notificationData = {
+      title: data.chatName || 'Tin nhắn mới',
+      message: `${data.senderName}: ${data.messageContent}`,
+      recipients: data.recipients,
+      type: 'chat_message',
+      priority: 'low',
+      data: {
+        chatId: data.chatId,
+        messageId: data.messageId,
+        senderId: data.senderId
+      }
+    };
+
+    await this.sendNotification(notificationData);
+  }
+
+  async handleUserOnline(data) {
+    console.log('🟢 [Notification Service] User online:', data.userId);
+    await redisClient.setUserOnline(data.userId, data.socketId);
+  }
+
+  async handleUserOffline(data) {
+    console.log('🔴 [Notification Service] User offline:', data.userId);
+    await redisClient.setUserOffline(data.userId);
+  }
+
+  // Workspace-backend event handlers
+  async handleNotificationSent(data) {
+    console.log('📤 [Notification Service] Notification sent:', data.notificationId);
+    // Track delivery status
+    await redisClient.trackNotificationDelivery(data.notificationId, data.userId, 'sent');
+  }
+
+  async handleUserStatusChanged(data) {
+    console.log('👤 [Notification Service] User status changed:', data.userId);
+    // Update user status in Redis
+    if (data.isOnline) {
+      await redisClient.setUserOnline(data.userId, data.socketId);
+    } else {
+      await redisClient.setUserOffline(data.userId);
+    }
+  }
+
+  async handleSystemEvent(data) {
+    console.log('⚙️ [Notification Service] System event:', data.event);
+    // Handle system-wide events
+    const notificationData = {
+      title: data.title || 'Thông báo hệ thống',
+      message: data.message,
+      recipients: data.recipients || 'all',
+      type: 'system_event',
+      priority: data.priority || 'medium',
+      data: data
     };
 
     await this.sendNotification(notificationData);
@@ -444,9 +564,13 @@ class CrossServiceCommunication {
   async getPushTokensForUsers(userIds) {
     const tokens = [];
     for (const userId of userIds) {
-      const userTokens = await redisClient.getPushTokens(userId);
-      if (userTokens && Object.keys(userTokens).length > 0) {
-        tokens.push(...Object.values(userTokens));
+      try {
+        const userTokens = await redisClient.getPushTokens(userId);
+        if (userTokens && Object.keys(userTokens).length > 0) {
+          tokens.push(...Object.values(userTokens));
+        }
+      } catch (error) {
+        console.error(`Error getting push tokens for user ${userId}:`, error);
       }
     }
     return tokens;
@@ -454,8 +578,12 @@ class CrossServiceCommunication {
 
   // Broadcast notification qua Socket.IO
   async broadcastNotification(notificationData) {
-    // Implementation sẽ được thêm trong app.js
-    console.log('📡 [Notification Service] Broadcasting notification to Socket.IO');
+    try {
+      // Implementation sẽ được thêm trong app.js
+      console.log('📡 [Notification Service] Broadcasting notification to Socket.IO');
+    } catch (error) {
+      console.error('Error broadcasting notification:', error);
+    }
   }
 
   // Gửi message đến ticket-service
@@ -471,6 +599,26 @@ class CrossServiceCommunication {
   // Gửi message đến tất cả services
   async sendToAllServices(event, data) {
     await redisClient.publishToAllServices(event, data);
+  }
+
+  // Health check
+  async healthCheck() {
+    try {
+      return {
+        service: 'notification-service',
+        status: 'healthy',
+        subscribedChannels: this.subscribedChannels.length,
+        isInitialized: this.isInitialized,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      return {
+        service: 'notification-service',
+        status: 'unhealthy',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 }
 

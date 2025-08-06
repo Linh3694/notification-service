@@ -1,6 +1,5 @@
-const Ticket = require("../../models/Ticket");
-const User = require("../../models/Users");
-const Notification = require("../../models/Notification");
+const database = require('../config/database');
+const redisClient = require('../config/redis');
 const { Expo } = require('expo-server-sdk');
 
 // Khởi tạo instance của Expo
@@ -86,20 +85,117 @@ const saveNotificationToDatabase = async (recipients, title, body, data = {}, ty
     try {
         // Tạo các đối tượng thông báo cho từng người nhận
         const notifications = recipients.map(recipient => ({
-            recipient,
-            title,
-            body,
-            data,
-            type,
-            read: false
+            name: `NOTIF_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            subject: title,
+            email_content: body,
+            for_user: recipient,
+            from_user: 'Administrator',
+            type: type,
+            document_type: 'Notification',
+            document_name: data.documentName || 'System Notification',
+            read: 0,
+            creation: new Date().toISOString(),
+            modified: new Date().toISOString(),
+            owner: 'Administrator',
+            modified_by: 'Administrator'
         }));
 
         // Lưu vào cơ sở dữ liệu
-        await Notification.insertMany(notifications);
+        for (const notification of notifications) {
+            await database.insert('Notification Log', notification);
+        }
+
+        console.log(`✅ [Notification Service] Saved ${notifications.length} notifications to database`);
     } catch (error) {
         console.error('Lỗi khi lưu thông báo vào cơ sở dữ liệu:', error);
+        throw error;
     }
 };
+
+/**
+ * Gửi notification mới
+ */
+exports.sendNotification = async (notificationData) => {
+    try {
+        const { title, message, recipients, notification_type, priority, channel, sender } = notificationData;
+        
+        console.log('📤 [Notification Service] Sending notification:', {
+            title,
+            recipients: recipients.length || 0,
+            type: notification_type
+        });
+
+        // Parse recipients nếu là string
+        let recipientList = recipients;
+        if (typeof recipients === 'string') {
+            try {
+                recipientList = JSON.parse(recipients);
+            } catch (error) {
+                console.error('Error parsing recipients:', error);
+                recipientList = [recipients];
+            }
+        }
+
+        // Lưu vào database
+        await saveNotificationToDatabase(
+            recipientList,
+            title,
+            message,
+            { type: notification_type, priority, channel, sender },
+            notification_type
+        );
+
+        // Gửi push notification
+        const pushTokens = await getPushTokensForUsers(recipientList);
+        if (pushTokens.length > 0) {
+            await sendPushNotifications(
+                pushTokens,
+                title,
+                message,
+                { type: notification_type, priority, channel, sender }
+            );
+        }
+
+        // Broadcast qua Socket.IO
+        await broadcastNotification(notificationData);
+
+        console.log('✅ [Notification Service] Notification sent successfully');
+        return { success: true, message: 'Notification sent successfully' };
+    } catch (error) {
+        console.error('❌ [Notification Service] Error sending notification:', error);
+        throw error;
+    }
+};
+
+/**
+ * Lấy push tokens cho danh sách users
+ */
+async function getPushTokensForUsers(userIds) {
+    const tokens = [];
+    for (const userId of userIds) {
+        try {
+            const userTokens = await redisClient.getPushTokens(userId);
+            if (userTokens && Object.keys(userTokens).length > 0) {
+                tokens.push(...Object.values(userTokens));
+            }
+        } catch (error) {
+            console.error(`Error getting push tokens for user ${userId}:`, error);
+        }
+    }
+    return tokens;
+}
+
+/**
+ * Broadcast notification qua Socket.IO
+ */
+async function broadcastNotification(notificationData) {
+    try {
+        // Implementation sẽ được thêm trong app.js
+        console.log('📡 [Notification Service] Broadcasting notification to Socket.IO');
+    } catch (error) {
+        console.error('Error broadcasting notification:', error);
+    }
+}
 
 /**
  * Gửi thông báo khi ticket mới được tạo
@@ -107,9 +203,7 @@ const saveNotificationToDatabase = async (recipients, title, body, data = {}, ty
 exports.sendNewTicketNotification = async (ticket) => {
     try {
         // Tìm tất cả các admin và technical để gửi thông báo
-        const admins = await User.find({
-            role: { $in: ['admin', 'superadmin', 'technical'] },
-        });
+        const admins = await database.getAll('User', { role: ['admin', 'superadmin', 'technical'] });
 
         if (!admins || admins.length === 0) {
             console.log('Không tìm thấy admin nào để gửi thông báo');
@@ -117,13 +211,13 @@ exports.sendNewTicketNotification = async (ticket) => {
         }
 
         // Lấy danh sách ID người nhận
-        const recipientIds = admins.map(admin => admin._id);
+        const recipientIds = admins.map(admin => admin.name);
 
         // Tạo nội dung thông báo
         const title = 'Ticket mới';
         const body = `Ticket #${ticket.ticketCode} đã được tạo và đang chờ xử lý`;
         const data = {
-            ticketId: ticket._id.toString(),
+            ticketId: ticket.name,
             ticketCode: ticket.ticketCode,
             type: 'new_ticket'
         };
@@ -132,9 +226,17 @@ exports.sendNewTicketNotification = async (ticket) => {
         await saveNotificationToDatabase(recipientIds, title, body, data, "ticket");
 
         // Lấy danh sách token từ các admin
-        const adminTokens = admins
-            .filter(admin => admin.deviceToken)
-            .map(admin => admin.deviceToken);
+        const adminTokens = [];
+        for (const admin of admins) {
+            try {
+                const tokens = await redisClient.getPushTokens(admin.name);
+                if (tokens && Object.keys(tokens).length > 0) {
+                    adminTokens.push(...Object.values(tokens));
+                }
+            } catch (error) {
+                console.error(`Error getting tokens for admin ${admin.name}:`, error);
+            }
+        }
 
         if (adminTokens.length === 0) {
             console.log('Không có admin nào đăng ký nhận thông báo');
@@ -157,26 +259,26 @@ exports.sendFeedbackNotification = async (ticket) => {
         const recipientsList = [];
 
         // Thêm người tạo ticket vào danh sách (nếu là admin/staff)
-        if (ticket.creator) {
-            const creator = await User.findById(ticket.creator);
+        if (ticket.owner) {
+            const creator = await database.get('User', ticket.owner);
             if (creator && (creator.role === 'admin' || creator.role === 'technical' || creator.role === 'superadmin')) {
                 recipientsList.push(creator);
             }
         }
 
         // Thêm người được gán ticket
-        if (ticket.assignedTo) {
-            const assignedUser = await User.findById(ticket.assignedTo);
+        if (ticket.assigned_to) {
+            const assignedUser = await database.get('User', ticket.assigned_to);
             if (assignedUser &&
-                !recipientsList.some(user => user._id.toString() === assignedUser._id.toString())) {
+                !recipientsList.some(user => user.name === assignedUser.name)) {
                 recipientsList.push(assignedUser);
             }
         }
 
         // Thêm tất cả admin và superadmin
-        const admins = await User.find({ role: { $in: ['admin', 'superadmin'] } });
+        const admins = await database.getAll('User', { role: ['admin', 'superadmin'] });
         for (const admin of admins) {
-            if (!recipientsList.some(user => user._id.toString() === admin._id.toString())) {
+            if (!recipientsList.some(user => user.name === admin.name)) {
                 recipientsList.push(admin);
             }
         }
@@ -187,7 +289,7 @@ exports.sendFeedbackNotification = async (ticket) => {
         }
 
         // Lấy danh sách ID người nhận
-        const recipientIds = recipientsList.map(user => user._id);
+        const recipientIds = recipientsList.map(user => user.name);
 
         // Tạo nội dung thông báo
         let title = `Ticket #${ticket.ticketCode} đã được đánh giá`;
@@ -200,7 +302,7 @@ exports.sendFeedbackNotification = async (ticket) => {
         }
 
         const data = {
-            ticketId: ticket._id.toString(),
+            ticketId: ticket.name,
             ticketCode: ticket.ticketCode,
             type: 'ticket_feedback',
         };
@@ -209,9 +311,17 @@ exports.sendFeedbackNotification = async (ticket) => {
         await saveNotificationToDatabase(recipientIds, title, body, data, "ticket");
 
         // Lấy danh sách token từ những người dùng có đăng ký thiết bị
-        const tokens = recipientsList
-            .filter(user => user.deviceToken)
-            .map(user => user.deviceToken);
+        const tokens = [];
+        for (const user of recipientsList) {
+            try {
+                const userTokens = await redisClient.getPushTokens(user.name);
+                if (userTokens && Object.keys(userTokens).length > 0) {
+                    tokens.push(...Object.values(userTokens));
+                }
+            } catch (error) {
+                console.error(`Error getting tokens for user ${user.name}:`, error);
+            }
+        }
 
         console.log('Tokens to send notification:', tokens);
 
@@ -236,29 +346,29 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
         const recipientsList = [];
 
         // Luôn thêm người tạo ticket vào danh sách nhận thông báo (trừ khi là người bị loại trừ)
-        if (ticket.creator && (!excludeUserId || ticket.creator.toString() !== excludeUserId.toString())) {
-            const creator = await User.findById(ticket.creator);
+        if (ticket.owner && (!excludeUserId || ticket.owner !== excludeUserId)) {
+            const creator = await database.get('User', ticket.owner);
             if (creator) {
                 recipientsList.push(creator);
             }
         }
 
         // Nếu ticket được gán cho ai đó, thêm họ vào danh sách (trừ khi là người bị loại trừ)
-        if (ticket.assignedTo && (!excludeUserId || ticket.assignedTo.toString() !== excludeUserId.toString())) {
-            const assignedUser = await User.findById(ticket.assignedTo);
+        if (ticket.assigned_to && (!excludeUserId || ticket.assigned_to !== excludeUserId)) {
+            const assignedUser = await database.get('User', ticket.assigned_to);
             if (assignedUser &&
-                !recipientsList.some(user => user._id.toString() === assignedUser._id.toString())) {
+                !recipientsList.some(user => user.name === assignedUser.name)) {
                 recipientsList.push(assignedUser);
             }
         }
 
         // Nếu action là status_updated (cập nhật trạng thái), thêm tất cả superadmin vào danh sách nhận thông báo
         if (action === 'status_updated') {
-            const superAdmins = await User.find({ role: "superadmin" });
+            const superAdmins = await database.getAll('User', { role: "superadmin" });
             for (const admin of superAdmins) {
                 // Kiểm tra xem admin đã có trong danh sách chưa và không phải là người bị loại trừ
-                if (!recipientsList.some(user => user._id.toString() === admin._id.toString()) && 
-                    (!excludeUserId || admin._id.toString() !== excludeUserId.toString())) {
+                if (!recipientsList.some(user => user.name === admin.name) && 
+                    (!excludeUserId || admin.name !== excludeUserId)) {
                     recipientsList.push(admin);
                 }
             }
@@ -268,10 +378,10 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
         // thêm tất cả admin và người được gán vào danh sách
         if (ticket.status === 'Closed' || 
             (ticket.status === 'Processing' && action === 'status_updated')) {
-            const admins = await User.find({ role: { $in: ['admin', 'technical'] } });
+            const admins = await database.getAll('User', { role: ['admin', 'technical'] });
             for (const admin of admins) {
-                if (!recipientsList.some(user => user._id.toString() === admin._id.toString()) && 
-                    (!excludeUserId || admin._id.toString() !== excludeUserId.toString())) {
+                if (!recipientsList.some(user => user.name === admin.name) && 
+                    (!excludeUserId || admin.name !== excludeUserId)) {
                     recipientsList.push(admin);
                 }
             }
@@ -283,7 +393,7 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
         }
 
         // Lấy danh sách ID người nhận
-        const recipientIds = recipientsList.map(user => user._id);
+        const recipientIds = recipientsList.map(user => user.name);
 
         // Tạo nội dung thông báo dựa trên hành động
         let title, body;
@@ -318,7 +428,7 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
         }
 
         const data = {
-            ticketId: ticket._id.toString(),
+            ticketId: ticket.name,
             ticketCode: ticket.ticketCode,
             type: 'ticket_update',
             action: action
@@ -328,27 +438,34 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
         await saveNotificationToDatabase(recipientIds, title, body, data, "ticket");
 
         // Lấy danh sách token từ những người dùng có đăng ký thiết bị
-        const tokens = recipientsList
-            .filter(user => {
-                // Kiểm tra xem user có phải là người gửi không
-                const isSender = excludeUserId && user._id.toString() === excludeUserId.toString();
-                console.log('Checking user:', {
-                    userId: user._id.toString(),
-                    excludeUserId: excludeUserId?.toString(),
-                    isSender,
-                    hasDeviceToken: !!user.deviceToken,
-                    deviceToken: user.deviceToken
-                });
-                // Chỉ lấy token của người không phải là người gửi và có device token
-                return !isSender && user.deviceToken;
-            })
-            .map(user => user.deviceToken);
+        const tokens = [];
+        for (const user of recipientsList) {
+            // Kiểm tra xem user có phải là người gửi không
+            const isSender = excludeUserId && user.name === excludeUserId;
+            console.log('Checking user:', {
+                userId: user.name,
+                excludeUserId: excludeUserId,
+                isSender,
+                hasDeviceToken: true // Assume they have tokens
+            });
+            // Chỉ lấy token của người không phải là người gửi
+            if (!isSender) {
+                try {
+                    const userTokens = await redisClient.getPushTokens(user.name);
+                    if (userTokens && Object.keys(userTokens).length > 0) {
+                        tokens.push(...Object.values(userTokens));
+                    }
+                } catch (error) {
+                    console.error(`Error getting tokens for user ${user.name}:`, error);
+                }
+            }
+        }
 
         console.log('Final tokens to send:', tokens);
         console.log('excludeUserId:', excludeUserId);
         console.log('recipientsList:', recipientsList.map(u => ({
-            id: u._id.toString(),
-            deviceToken: u.deviceToken
+            id: u.name,
+            deviceToken: 'stored in redis'
         })));
 
         // Gửi thông báo
@@ -367,7 +484,7 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
 exports.registerDevice = async (req, res) => {
     try {
         const { deviceToken } = req.body;
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
         if (!deviceToken) {
             return res.status(400).json({
@@ -384,8 +501,8 @@ exports.registerDevice = async (req, res) => {
             });
         }
 
-        // Cập nhật token vào tài khoản người dùng
-        await User.findByIdAndUpdate(userId, { deviceToken });
+        // Lưu token vào Redis
+        await redisClient.storePushToken(userId, deviceToken);
 
         return res.status(200).json({
             success: true,
@@ -405,10 +522,10 @@ exports.registerDevice = async (req, res) => {
  */
 exports.unregisterDevice = async (req, res) => {
     try {
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
-        // Xóa token khỏi tài khoản người dùng
-        await User.findByIdAndUpdate(userId, { $unset: { deviceToken: 1 } });
+        // Xóa token khỏi Redis
+        await redisClient.removePushToken(userId);
 
         return res.status(200).json({
             success: true,
@@ -428,30 +545,34 @@ exports.unregisterDevice = async (req, res) => {
  */
 exports.getNotifications = async (req, res) => {
     try {
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
         const skip = (page - 1) * limit;
 
-        // Lấy danh sách thông báo
-        const notifications = await Notification.find({ recipient: userId })
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit);
+        // Lấy danh sách thông báo từ database
+        const notifications = await database.getAll(
+            'Notification Log', 
+            { for_user: userId },
+            ['name', 'subject', 'email_content', 'type', 'read', 'creation'],
+            'creation DESC',
+            limit,
+            skip
+        );
 
         // Đếm tổng số thông báo và số thông báo chưa đọc
-        const total = await Notification.countDocuments({ recipient: userId });
-        const unreadCount = await Notification.countDocuments({ recipient: userId, read: false });
+        const total = await database.getAll('Notification Log', { for_user: userId });
+        const unreadCount = await database.getAll('Notification Log', { for_user: userId, read: 0 });
 
         return res.status(200).json({
             success: true,
             notifications,
             pagination: {
-                total,
-                unreadCount,
+                total: total.length,
+                unreadCount: unreadCount.length,
                 page,
                 limit,
-                pages: Math.ceil(total / limit)
+                pages: Math.ceil(total.length / limit)
             }
         });
     } catch (error) {
@@ -469,22 +590,23 @@ exports.getNotifications = async (req, res) => {
 exports.markAsRead = async (req, res) => {
     try {
         const { notificationId } = req.params;
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
-        const notification = await Notification.findOne({
-            _id: notificationId,
-            recipient: userId
-        });
-
-        if (!notification) {
+        const notification = await database.get('Notification Log', notificationId);
+        if (!notification || notification.for_user !== userId) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy thông báo'
             });
         }
 
-        notification.read = true;
-        await notification.save();
+        await database.update('Notification Log', notificationId, {
+            read: 1,
+            modified: new Date().toISOString()
+        });
+
+        // Invalidate cache
+        await redisClient.invalidateUserNotificationsCache(userId);
 
         return res.status(200).json({
             success: true,
@@ -504,12 +626,15 @@ exports.markAsRead = async (req, res) => {
  */
 exports.markAllAsRead = async (req, res) => {
     try {
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
-        await Notification.updateMany(
-            { recipient: userId, read: false },
-            { $set: { read: true } }
+        await database.query(
+            'UPDATE `tabNotification Log` SET `read` = 1, `modified` = ? WHERE `for_user` = ?',
+            [new Date().toISOString(), userId]
         );
+
+        // Invalidate cache
+        await redisClient.invalidateUserNotificationsCache(userId);
 
         return res.status(200).json({
             success: true,
@@ -530,21 +655,20 @@ exports.markAllAsRead = async (req, res) => {
 exports.deleteNotification = async (req, res) => {
     try {
         const { notificationId } = req.params;
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
-        const notification = await Notification.findOne({
-            _id: notificationId,
-            recipient: userId
-        });
-
-        if (!notification) {
+        const notification = await database.get('Notification Log', notificationId);
+        if (!notification || notification.for_user !== userId) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy thông báo'
             });
         }
 
-        await notification.deleteOne();
+        await database.delete('Notification Log', notificationId);
+
+        // Invalidate cache
+        await redisClient.invalidateUserNotificationsCache(userId);
 
         return res.status(200).json({
             success: true,
@@ -564,9 +688,15 @@ exports.deleteNotification = async (req, res) => {
  */
 exports.deleteAllNotifications = async (req, res) => {
     try {
-        const userId = req.user._id;
+        const userId = req.user.name || req.user._id;
 
-        await Notification.deleteMany({ recipient: userId });
+        await database.query(
+            'DELETE FROM `tabNotification Log` WHERE `for_user` = ?',
+            [userId]
+        );
+
+        // Invalidate cache
+        await redisClient.invalidateUserNotificationsCache(userId);
 
         return res.status(200).json({
             success: true,
@@ -600,7 +730,7 @@ exports.sendNewChatMessageNotification = async (message, senderName, chat) => {
         }
 
         // Tìm thông tin chi tiết của người nhận
-        const recipients = await User.find({ _id: { $in: recipientIds } });
+        const recipients = await database.getAll('User', { _id: { $in: recipientIds } });
 
         if (recipients.length === 0) {
             console.log('Không tìm thấy thông tin người nhận');
@@ -660,9 +790,17 @@ exports.sendNewChatMessageNotification = async (message, senderName, chat) => {
         await saveNotificationToDatabase(recipientIds, title, body, data, "chat");
 
         // Lấy danh sách token thiết bị từ người nhận
-        const recipientTokens = recipients
-            .filter(user => user.deviceToken)
-            .map(user => user.deviceToken);
+        const recipientTokens = [];
+        for (const user of recipients) {
+            try {
+                const userTokens = await redisClient.getPushTokens(user._id);
+                if (userTokens && Object.keys(userTokens).length > 0) {
+                    recipientTokens.push(...Object.values(userTokens));
+                }
+            } catch (error) {
+                console.error(`Error getting tokens for user ${user._id}:`, error);
+            }
+        }
 
         if (recipientTokens.length === 0) {
             console.log('Không có người nhận nào đăng ký thiết bị nhận thông báo');
@@ -687,7 +825,7 @@ exports.sendTaggedInPostNotification = async (post, authorName, taggedUserIds) =
         }
 
         // Tìm thông tin người được tag
-        const taggedUsers = await User.find({ _id: { $in: taggedUserIds } });
+        const taggedUsers = await database.getAll('User', { _id: { $in: taggedUserIds } });
 
         if (taggedUsers.length === 0) {
             console.log('Không tìm thấy người dùng được tag');
@@ -710,9 +848,17 @@ exports.sendTaggedInPostNotification = async (post, authorName, taggedUserIds) =
         await saveNotificationToDatabase(taggedUserIds, title, body, data, "post");
 
         // Lấy danh sách token thiết bị
-        const userTokens = taggedUsers
-            .filter(user => user.deviceToken)
-            .map(user => user.deviceToken);
+        const userTokens = [];
+        for (const user of taggedUsers) {
+            try {
+                const userTokens = await redisClient.getPushTokens(user._id);
+                if (userTokens && Object.keys(userTokens).length > 0) {
+                    userTokens.push(...Object.values(userTokens));
+                }
+            } catch (error) {
+                console.error(`Error getting tokens for user ${user._id}:`, error);
+            }
+        }
 
         if (userTokens.length === 0) {
             console.log('Không có người được tag nào đăng ký thiết bị nhận thông báo');
@@ -733,7 +879,7 @@ exports.sendTaggedInPostNotification = async (post, authorName, taggedUserIds) =
 exports.sendPostReactionNotification = async (post, reactorName, reactionType) => {
     try {
         // Tìm thông tin tác giả bài viết
-        const postAuthor = await User.findById(post.author._id || post.author);
+        const postAuthor = await database.get('User', post.author._id || post.author);
 
         if (!postAuthor) {
             console.log('Không tìm thấy tác giả bài viết');
@@ -776,7 +922,7 @@ exports.sendPostReactionNotification = async (post, reactorName, reactionType) =
 exports.sendPostCommentNotification = async (post, commenterName, commentContent) => {
     try {
         // Tìm thông tin tác giả bài viết
-        const postAuthor = await User.findById(post.author._id || post.author);
+        const postAuthor = await database.get('User', post.author._id || post.author);
 
         if (!postAuthor) {
             console.log('Không tìm thấy tác giả bài viết');
@@ -826,7 +972,7 @@ exports.sendCommentReactionNotification = async (post, commentId, reactorName, r
         }
 
         // Tìm thông tin tác giả comment
-        const commentAuthor = await User.findById(comment.user._id || comment.user);
+        const commentAuthor = await database.get('User', comment.user._id || comment.user);
 
         if (!commentAuthor) {
             console.log('Không tìm thấy tác giả comment');
@@ -877,7 +1023,7 @@ exports.sendCommentReplyNotification = async (post, parentCommentId, replierName
         }
 
         // Tìm thông tin tác giả parent comment
-        const parentCommentAuthor = await User.findById(parentComment.user._id || parentComment.user);
+        const parentCommentAuthor = await database.get('User', parentComment.user._id || parentComment.user);
 
         if (!parentCommentAuthor) {
             console.log('Không tìm thấy tác giả parent comment');

@@ -76,10 +76,13 @@ app.get('/health', async (req, res) => {
     await database.query('SELECT 1');
     
     // Check Redis connection
-    await redisClient.client.ping();
+    const redisPing = await redisClient.ping();
     
     // Check notification queue length
     const queueLength = await redisClient.getQueueLength();
+    
+    // Check cross-service communication health
+    const crossServiceHealth = await crossServiceCommunication.healthCheck();
     
     res.status(200).json({ 
       status: 'ok', 
@@ -87,14 +90,17 @@ app.get('/health', async (req, res) => {
       version: '1.0.0',
       timestamp: new Date().toISOString(),
       database: 'connected',
-      redis: 'connected',
-      queue_length: queueLength
+      redis: redisPing ? 'connected' : 'disconnected',
+      queue_length: queueLength,
+      cross_service_communication: crossServiceHealth,
+      uptime: process.uptime()
     });
   } catch (error) {
     res.status(500).json({
       status: 'error',
       service: 'notification-service',
-      error: error.message
+      error: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -205,6 +211,27 @@ io.on('connection', (socket) => {
     }
   });
   
+  // Handle user presence
+  socket.on('user_online', async (data) => {
+    try {
+      const { userId } = data;
+      await redisClient.setUserOnline(userId, socket.id);
+      console.log(`🟢 [Notification Service] User ${userId} is online`);
+    } catch (error) {
+      console.error('❌ [Notification Service] Error setting user online:', error);
+    }
+  });
+  
+  socket.on('user_offline', async (data) => {
+    try {
+      const { userId } = data;
+      await redisClient.setUserOffline(userId);
+      console.log(`🔴 [Notification Service] User ${userId} is offline`);
+    } catch (error) {
+      console.error('❌ [Notification Service] Error setting user offline:', error);
+    }
+  });
+  
   socket.on('disconnect', () => {
     console.log('🔌 [Notification Service] Client disconnected:', socket.id);
   });
@@ -249,13 +276,27 @@ cron.schedule('0 2 * * *', async () => {
   }
 });
 
+// Redis health check every 5 minutes
+cron.schedule('*/5 * * * *', async () => {
+  try {
+    const ping = await redisClient.ping();
+    if (!ping) {
+      console.warn('⚠️ [Notification Service] Redis connection lost, attempting reconnect...');
+      await redisClient.checkAndReconnect();
+    }
+  } catch (error) {
+    console.error('❌ [Notification Service] Redis health check failed:', error);
+  }
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('❌ [Notification Service] Error:', err);
   res.status(500).json({ 
     error: 'Internal server error',
     message: err.message,
-    service: 'notification-service'
+    service: 'notification-service',
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -264,25 +305,70 @@ app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Endpoint not found',
     service: 'notification-service',
-    path: req.originalUrl
+    path: req.originalUrl,
+    timestamp: new Date().toISOString()
   });
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('🛑 [Notification Service] Received SIGTERM, shutting down gracefully...');
-  server.close(() => {
-    console.log('🛑 [Notification Service] HTTP server closed');
-    process.exit(0);
-  });
+  
+  try {
+    // Close database connections
+    if (database.pool) {
+      await database.pool.end();
+    }
+    
+    // Close Redis connections
+    if (redisClient.client) {
+      await redisClient.client.quit();
+    }
+    if (redisClient.pubClient) {
+      await redisClient.pubClient.quit();
+    }
+    if (redisClient.subClient) {
+      await redisClient.subClient.quit();
+    }
+    
+    server.close(() => {
+      console.log('🛑 [Notification Service] HTTP server closed');
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error('❌ [Notification Service] Error during shutdown:', error);
+    process.exit(1);
+  }
 });
 
 process.on('SIGINT', async () => {
   console.log('🛑 [Notification Service] Received SIGINT, shutting down gracefully...');
-  server.close(() => {
-    console.log('🛑 [Notification Service] HTTP server closed');
-    process.exit(0);
-  });
+  
+  try {
+    // Close database connections
+    if (database.pool) {
+      await database.pool.end();
+    }
+    
+    // Close Redis connections
+    if (redisClient.client) {
+      await redisClient.client.quit();
+    }
+    if (redisClient.pubClient) {
+      await redisClient.pubClient.quit();
+    }
+    if (redisClient.subClient) {
+      await redisClient.subClient.quit();
+    }
+    
+    server.close(() => {
+      console.log('🛑 [Notification Service] HTTP server closed');
+      process.exit(0);
+    });
+  } catch (error) {
+    console.error('❌ [Notification Service] Error during shutdown:', error);
+    process.exit(1);
+  }
 });
 
 // Start server
@@ -290,6 +376,7 @@ const PORT = process.env.PORT || 5003;
 server.listen(PORT, () => {
   console.log(`🚀 [Notification Service] Server running on port ${PORT}`);
   console.log(`🌐 [Notification Service] Health check: http://localhost:${PORT}/health`);
+  console.log(`📡 [Notification Service] Socket.IO endpoint: http://localhost:${PORT}`);
 });
 
 // Connect to database

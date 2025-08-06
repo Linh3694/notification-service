@@ -6,119 +6,283 @@ class RedisClient {
     this.client = null;
     this.pubClient = null;
     this.subClient = null;
+    this.isConnected = false;
+    this.connectionAttempts = 0;
+    this.maxConnectionAttempts = 5;
+    this.reconnectDelay = 5000; // 5 seconds
   }
 
   async connect() {
     try {
+      // Main Redis client với reconnection strategy
       this.client = createClient({
         socket: {
           host: process.env.REDIS_HOST,
           port: process.env.REDIS_PORT,
+          connectTimeout: 10000,
+          lazyConnect: true,
+          reconnectStrategy: (retries) => {
+            const delay = Math.min(retries * 100, 3000);
+            console.log(`🔄 [Notification Service] Redis retry #${retries}, delay ${delay}ms`);
+            if (retries > 10) {
+              console.error('[Notification Service] Redis max retries reached');
+              return new Error('Redis max retries reached');
+            }
+            return delay;
+          }
         },
         password: process.env.REDIS_PASSWORD,
       });
 
+      // Publisher client cho Socket.IO
       this.pubClient = createClient({
         socket: {
           host: process.env.REDIS_HOST,
           port: process.env.REDIS_PORT,
+          connectTimeout: 10000,
+          lazyConnect: true,
+          reconnectStrategy: (retries) => {
+            const delay = Math.min(retries * 100, 3000);
+            console.log(`🔄 [Notification Service] Redis PubClient retry #${retries}, delay ${delay}ms`);
+            if (retries > 10) {
+              console.error('[Notification Service] Redis PubClient max retries reached');
+              return new Error('Redis PubClient max retries reached');
+            }
+            return delay;
+          }
         },
         password: process.env.REDIS_PASSWORD,
       });
 
-      this.subClient = this.pubClient.duplicate();
+      // Subscriber client cho Socket.IO
+      this.subClient = createClient({
+        socket: {
+          host: process.env.REDIS_HOST,
+          port: process.env.REDIS_PORT,
+          connectTimeout: 10000,
+          lazyConnect: true,
+          reconnectStrategy: (retries) => {
+            const delay = Math.min(retries * 100, 3000);
+            console.log(`🔄 [Notification Service] Redis SubClient retry #${retries}, delay ${delay}ms`);
+            if (retries > 10) {
+              console.error('[Notification Service] Redis SubClient max retries reached');
+              return new Error('Redis SubClient max retries reached');
+            }
+            return delay;
+          }
+        },
+        password: process.env.REDIS_PASSWORD,
+      });
 
+      // Error handling
+      this.client.on('error', (err) => {
+        console.error('❌ [Notification Service] Redis Client Error:', err);
+        this.isConnected = false;
+      });
+
+      this.pubClient.on('error', (err) => {
+        console.error('❌ [Notification Service] Redis PubClient Error:', err);
+      });
+
+      this.subClient.on('error', (err) => {
+        console.error('❌ [Notification Service] Redis SubClient Error:', err);
+      });
+
+      // Connect all clients
       await this.client.connect();
       await this.pubClient.connect();
       await this.subClient.connect();
 
+      // Test connection
+      await this.client.ping();
+      
+      this.isConnected = true;
       console.log('✅ [Notification Service] Redis connected successfully');
     } catch (error) {
+      this.isConnected = false;
       console.error('❌ [Notification Service] Redis connection failed:', error.message);
       throw error;
     }
   }
 
+  // Helper method để stringify an toàn
+  _safeStringify(data, methodName = 'unknown') {
+    if (data === undefined || data === null) {
+      console.warn(`[Notification Service][${methodName}] data is ${data}, cannot stringify`);
+      return null;
+    }
+    try {
+      return JSON.stringify(data);
+    } catch (error) {
+      try {
+        const seen = new WeakSet();
+        const result = JSON.stringify(data, (key, val) => {
+          if (val != null && typeof val === "object") {
+            if (seen.has(val)) {
+              return {};
+            }
+            seen.add(val);
+          }
+          return val;
+        });
+        console.warn(`[Notification Service][${methodName}] stringify succeeded with circular reference handling`);
+        return result;
+      } catch (secondError) {
+        console.error(`[Notification Service][${methodName}] stringify error even with circular reference handling: ${secondError.message}`);
+        return null;
+      }
+    }
+  }
+
+  // Helper method để convert userId to string an toàn
+  _safeUserIdToString(userId, methodName = 'unknown') {
+    if (userId == null) {
+      throw new Error(`userId is undefined or null in ${methodName}`);
+    }
+    if (typeof userId === 'string') {
+      return userId;
+    }
+    if (typeof userId === 'object' && typeof userId.toHexString === 'function') {
+      return userId.toHexString();
+    }
+    if (typeof userId === 'object' && '_id' in userId) {
+      return String(userId._id);
+    }
+    try {
+      if (userId != null && typeof userId.toString === 'function') {
+        return userId.toString();
+      }
+      return String(userId);
+    } catch (error) {
+      console.error(`[Notification Service][_safeUserIdToString] Error converting userId to string in ${methodName}: ${error.message}, type: ${typeof userId}`);
+      throw new Error(`Cannot convert userId to string in ${methodName}: ${error.message}`);
+    }
+  }
+
   async set(key, value, ttl = null) {
-    const stringValue = typeof value === 'object' ? JSON.stringify(value) : value;
-    if (ttl) {
-      await this.client.setEx(key, ttl, stringValue);
-    } else {
-      await this.client.set(key, stringValue);
+    try {
+      const stringValue = this._safeStringify(value, 'set');
+      if (stringValue === null) {
+        console.warn(`[Notification Service] Cannot stringify value for key: ${key}`);
+        return;
+      }
+      
+      if (ttl) {
+        await this.client.setEx(key, ttl, stringValue);
+      } else {
+        await this.client.set(key, stringValue);
+      }
+    } catch (error) {
+      console.error(`[Notification Service] Error setting key ${key}:`, error);
+      throw error;
     }
   }
 
   async get(key) {
-    const value = await this.client.get(key);
     try {
-      return JSON.parse(value);
-    } catch {
-      return value;
+      const value = await this.client.get(key);
+      if (value === null) return null;
+      
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    } catch (error) {
+      console.error(`[Notification Service] Error getting key ${key}:`, error);
+      throw error;
     }
   }
 
   async del(key) {
-    await this.client.del(key);
+    try {
+      await this.client.del(key);
+    } catch (error) {
+      console.error(`[Notification Service] Error deleting key ${key}:`, error);
+      throw error;
+    }
   }
 
   async publish(channel, message) {
-    const stringMessage = typeof message === 'object' ? JSON.stringify(message) : message;
-    await this.pubClient.publish(channel, stringMessage);
+    try {
+      const stringMessage = this._safeStringify(message, 'publish');
+      if (stringMessage === null) {
+        console.warn(`[Notification Service] Cannot stringify message for channel: ${channel}`);
+        return;
+      }
+      await this.pubClient.publish(channel, stringMessage);
+    } catch (error) {
+      console.error(`[Notification Service] Error publishing to channel ${channel}:`, error);
+      throw error;
+    }
   }
 
   async subscribe(channel, callback) {
-    await this.subClient.subscribe(channel, (message) => {
-      try {
-        const parsedMessage = JSON.parse(message);
-        callback(parsedMessage);
-      } catch {
-        callback(message);
-      }
-    });
+    try {
+      await this.subClient.subscribe(channel, (message) => {
+        try {
+          const parsedMessage = JSON.parse(message);
+          callback(parsedMessage);
+        } catch {
+          callback(message);
+        }
+      });
+    } catch (error) {
+      console.error(`[Notification Service] Error subscribing to channel ${channel}:`, error);
+      throw error;
+    }
   }
 
   // Multi-channel subscription
   async subscribeToChannels(channels, callback) {
-    for (const channel of channels) {
-      await this.subscribe(channel, callback);
+    try {
+      for (const channel of channels) {
+        await this.subscribe(channel, callback);
+      }
+    } catch (error) {
+      console.error(`[Notification Service] Error subscribing to channels:`, error);
+      throw error;
     }
   }
 
   // Notification-specific cache methods
   async cacheUserNotifications(userId, notifications) {
-    const key = `notifications:user:${userId}`;
+    const key = `notifications:user:${this._safeUserIdToString(userId, 'cacheUserNotifications')}`;
     await this.set(key, notifications, 1800); // Cache for 30 minutes
   }
 
   async getCachedUserNotifications(userId) {
-    const key = `notifications:user:${userId}`;
+    const key = `notifications:user:${this._safeUserIdToString(userId, 'getCachedUserNotifications')}`;
     return await this.get(key);
   }
 
   async invalidateUserNotificationsCache(userId) {
-    const key = `notifications:user:${userId}`;
+    const key = `notifications:user:${this._safeUserIdToString(userId, 'invalidateUserNotificationsCache')}`;
     await this.del(key);
   }
 
   // Push token management
   async storePushToken(userId, token, platform = 'expo') {
-    const key = `push_tokens:${userId}`;
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'storePushToken')}`;
     await this.client.hSet(key, platform, token);
   }
 
   async getPushTokens(userId) {
-    const key = `push_tokens:${userId}`;
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
     return await this.client.hGetAll(key);
   }
 
   async removePushToken(userId, platform = 'expo') {
-    const key = `push_tokens:${userId}`;
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'removePushToken')}`;
     await this.client.hDel(key, platform);
   }
 
   // Notification queue
   async queueNotification(notification) {
-    await this.client.lPush('notification_queue', JSON.stringify(notification));
+    const stringNotification = this._safeStringify(notification, 'queueNotification');
+    if (stringNotification) {
+      await this.client.lPush('notification_queue', stringNotification);
+    }
   }
 
   async dequeueNotification() {
@@ -163,17 +327,17 @@ class RedisClient {
 
   // User presence tracking
   async setUserOnline(userId, socketId) {
-    const key = `user:online:${userId}`;
+    const key = `user:online:${this._safeUserIdToString(userId, 'setUserOnline')}`;
     await this.set(key, { socketId, timestamp: new Date().toISOString() }, 3600); // 1 hour TTL
   }
 
   async setUserOffline(userId) {
-    const key = `user:online:${userId}`;
+    const key = `user:online:${this._safeUserIdToString(userId, 'setUserOffline')}`;
     await this.del(key);
   }
 
   async isUserOnline(userId) {
-    const key = `user:online:${userId}`;
+    const key = `user:online:${this._safeUserIdToString(userId, 'isUserOnline')}`;
     const data = await this.get(key);
     return !!data;
   }
@@ -181,7 +345,7 @@ class RedisClient {
   // Notification delivery tracking
   async trackNotificationDelivery(notificationId, userId, status = 'sent') {
     const key = `notification:delivery:${notificationId}`;
-    await this.client.hSet(key, userId, JSON.stringify({
+    await this.client.hSet(key, this._safeUserIdToString(userId, 'trackNotificationDelivery'), JSON.stringify({
       status,
       timestamp: new Date().toISOString()
     }));
@@ -191,6 +355,28 @@ class RedisClient {
   async getNotificationDeliveryStatus(notificationId) {
     const key = `notification:delivery:${notificationId}`;
     return await this.client.hGetAll(key);
+  }
+
+  // Health check
+  async ping() {
+    try {
+      return await this.client.ping();
+    } catch (error) {
+      console.error('[Notification Service] Redis ping failed:', error);
+      return false;
+    }
+  }
+
+  // Reconnection
+  async checkAndReconnect() {
+    if (!this.isConnected) {
+      console.log('[Notification Service] Attempting to reconnect to Redis...');
+      try {
+        await this.connect();
+      } catch (error) {
+        console.error('[Notification Service] Reconnection failed:', error);
+      }
+    }
   }
 
   getPubClient() {
