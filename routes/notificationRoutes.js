@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const notificationController = require("../controllers/notificationController");
-const authenticate = require("../../middleware/authMiddleware");
+// const authenticate = require("../../middleware/authMiddleware");
 const crossServiceCommunication = require("../../services/crossServiceCommunication");
 
 // Đăng ký thiết bị để nhận thông báo
