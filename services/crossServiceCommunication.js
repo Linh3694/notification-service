@@ -44,7 +44,7 @@ class CrossServiceCommunication {
     try {
       console.log('📨 [Notification Service] Received message:', {
         service: message.service,
-        event: message.event,
+        event: message.event || message.type, // Support both event and type
         timestamp: message.timestamp
       });
 
@@ -608,13 +608,13 @@ class CrossServiceCommunication {
 
   // Handle messages từ attendance service
   async handleAttendanceServiceMessage(message) {
-    console.log('⏰ [Notification Service] Processing attendance service message:', message.event);
+    console.log('⏰ [Notification Service] Processing attendance service message:', message.type);
     
     // Chỉ xử lý event attendance_recorded - đơn giản hóa
-    if (message.event === 'attendance_recorded') {
+    if (message.type === 'attendance_recorded') {
       await this.handleAttendanceRecorded(message.data);
     } else {
-      console.log('⚠️ [Notification Service] Ignoring attendance event:', message.event);
+      console.log('⚠️ [Notification Service] Ignoring attendance event:', message.type);
     }
   }
 
