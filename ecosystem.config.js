@@ -9,12 +9,12 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'development',
-        PORT: 5001,
+        PORT: 5003,
         INSTANCE_ID: '1'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 5001,
+        PORT: 5003,
         INSTANCE_ID: '1'
       },
       error_file: './logs/err-1.log',
@@ -39,12 +39,12 @@ module.exports = {
       max_memory_restart: '1G',
       env: {
         NODE_ENV: 'development',
-        PORT: 5002,
+        PORT: 5004,
         INSTANCE_ID: '2'
       },
       env_production: {
         NODE_ENV: 'production',
-        PORT: 5002,
+        PORT: 5004,
         INSTANCE_ID: '2'
       },
       error_file: './logs/err-2.log',

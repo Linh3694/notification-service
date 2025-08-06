@@ -25,6 +25,28 @@ router.delete("/:notificationId", authenticate, notificationController.deleteNot
 // Xóa tất cả thông báo
 router.delete("/", authenticate, notificationController.deleteAllNotifications);
 
+// =============================
+// NEW DATABASE-BASED APIs
+// =============================
+
+// Lấy notifications của user với pagination (database-based)
+router.get("/user/:userId", notificationController.getUserNotifications);
+
+// Đánh dấu notification đã đọc (database-based)
+router.post("/:notificationId/mark-read", notificationController.markNotificationAsRead);
+
+// Đánh dấu tất cả notifications đã đọc (database-based)
+router.post("/mark-all-read", notificationController.markAllNotificationsAsRead);
+
+// Lấy số lượng unread notifications
+router.get("/user/:userId/unread-count", notificationController.getUnreadCount);
+
+// Analytics: Lấy thống kê user
+router.get("/user/:userId/stats", notificationController.getUserNotificationStats);
+
+// Analytics: Chi tiết notification
+router.get("/:notificationId/analytics", notificationController.getNotificationAnalytics);
+
 // Test cross-service communication
 router.post("/test/ticket-service", async (req, res) => {
   try {
@@ -47,47 +69,6 @@ router.post("/test/ticket-service", async (req, res) => {
   }
 });
 
-router.post("/test/frappe", async (req, res) => {
-  try {
-    const { event, data } = req.body;
-    
-    await crossServiceCommunication.sendToFrappe(event, data);
-    
-    res.status(200).json({
-      success: true,
-      message: `Message sent to frappe: ${event}`,
-      data: data
-    });
-  } catch (error) {
-    console.error('Error sending message to frappe:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send message to frappe',
-      error: error.message
-    });
-  }
-});
-
-router.post("/test/broadcast", async (req, res) => {
-  try {
-    const { event, data } = req.body;
-    
-    await crossServiceCommunication.sendToAllServices(event, data);
-    
-    res.status(200).json({
-      success: true,
-      message: `Message broadcasted to all services: ${event}`,
-      data: data
-    });
-  } catch (error) {
-    console.error('Error broadcasting message:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to broadcast message',
-      error: error.message
-    });
-  }
-});
 
 // Get notification delivery status
 router.get("/delivery-status/:notificationId", async (req, res) => {
@@ -114,7 +95,7 @@ router.get("/delivery-status/:notificationId", async (req, res) => {
 router.get("/user-status/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
-    const isOnline = await require("../../config/redis").isUserOnline(userId);
+    const isOnline = await require("../config/redis").isUserOnline(userId);
     
     res.status(200).json({
       success: true,

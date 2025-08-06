@@ -1,6 +1,8 @@
 const database = require('../config/database');
 const redisClient = require('../config/redis');
 const { Expo } = require('expo-server-sdk');
+const Notification = require('../models/Notification');
+const NotificationRead = require('../models/NotificationRead');
 
 // Khởi tạo instance của Expo
 let expo = new Expo();
@@ -113,15 +115,15 @@ const saveNotificationToDatabase = async (recipients, title, body, data = {}, ty
 };
 
 /**
- * Gửi notification mới
+ * Gửi notification mới - cập nhật để sử dụng MongoDB
  */
 exports.sendNotification = async (notificationData) => {
     try {
-        const { title, message, recipients, notification_type, priority, channel, sender } = notificationData;
+        const { title, message, recipients, notification_type, priority, channel, data } = notificationData;
         
         console.log('📤 [Notification Service] Sending notification:', {
             title,
-            recipients: recipients.length || 0,
+            recipients: recipients?.length || 0,
             type: notification_type
         });
 
@@ -136,31 +138,50 @@ exports.sendNotification = async (notificationData) => {
             }
         }
 
-        // Lưu vào database
-        await saveNotificationToDatabase(
-            recipientList,
+        // Tạo notification trong database
+        const notification = new Notification({
             title,
             message,
-            { type: notification_type, priority, channel, sender },
-            notification_type
-        );
+            type: notification_type || 'system',
+            priority: priority || 'medium',
+            channel: channel || 'push',
+            data: data || {},
+            recipients: recipientList,
+            totalRecipients: recipientList.length,
+            createdBy: 'notification-service'
+        });
 
-        // Gửi push notification
-        const pushTokens = await getPushTokensForUsers(recipientList);
-        if (pushTokens.length > 0) {
-            await sendPushNotifications(
-                pushTokens,
-                title,
-                message,
-                { type: notification_type, priority, channel, sender }
-            );
-        }
+        await notification.save();
+        console.log('✅ [Notification Service] Notification saved to database:', notification._id);
+
+        // Tạo NotificationRead records cho từng recipient
+        const readRecords = recipientList.map(userId => ({
+            notificationId: notification._id,
+            userId: userId,
+            read: false,
+            deliveryStatus: 'sent'
+        }));
+
+        await NotificationRead.insertMany(readRecords);
+        notification.sentCount = recipientList.length;
+        await notification.save();
+
+        // Gửi push notifications
+        const pushResults = await sendPushNotificationsToUsers(recipientList, title, message, data);
+        
+        // Cập nhật delivery status
+        await updateDeliveryStatus(notification._id, pushResults);
 
         // Broadcast qua Socket.IO
-        await broadcastNotification(notificationData);
+        await broadcastNotificationToUsers(recipientList, notification);
 
         console.log('✅ [Notification Service] Notification sent successfully');
-        return { success: true, message: 'Notification sent successfully' };
+        return { 
+            success: true, 
+            message: 'Notification sent successfully',
+            notificationId: notification._id,
+            recipients: recipientList.length
+        };
     } catch (error) {
         console.error('❌ [Notification Service] Error sending notification:', error);
         throw error;
@@ -168,30 +189,82 @@ exports.sendNotification = async (notificationData) => {
 };
 
 /**
- * Lấy push tokens cho danh sách users
+ * Gửi push notifications đến danh sách users và trả về kết quả
  */
-async function getPushTokensForUsers(userIds) {
-    const tokens = [];
+async function sendPushNotificationsToUsers(userIds, title, message, data = {}) {
+    const results = [];
+    
     for (const userId of userIds) {
         try {
             const userTokens = await redisClient.getPushTokens(userId);
             if (userTokens && Object.keys(userTokens).length > 0) {
-                tokens.push(...Object.values(userTokens));
+                const tokens = Object.values(userTokens);
+                const tickets = await sendPushNotifications(tokens, title, message, data);
+                
+                results.push({
+                    userId,
+                    tokens,
+                    tickets,
+                    success: true
+                });
+            } else {
+                results.push({
+                    userId,
+                    tokens: [],
+                    tickets: [],
+                    success: false,
+                    error: 'No push tokens found'
+                });
             }
         } catch (error) {
-            console.error(`Error getting push tokens for user ${userId}:`, error);
+            console.error(`Error sending push to user ${userId}:`, error);
+            results.push({
+                userId,
+                tokens: [],
+                tickets: [],
+                success: false,
+                error: error.message
+            });
         }
     }
-    return tokens;
+    
+    return results;
 }
 
 /**
- * Broadcast notification qua Socket.IO
+ * Cập nhật delivery status dựa trên push results
  */
-async function broadcastNotification(notificationData) {
+async function updateDeliveryStatus(notificationId, pushResults) {
+    for (const result of pushResults) {
+        try {
+            const readRecord = await NotificationRead.findOne({
+                notificationId,
+                userId: result.userId
+            });
+            
+            if (readRecord) {
+                if (result.success && result.tickets.length > 0) {
+                    await readRecord.markAsDelivered();
+                } else {
+                    await readRecord.markAsFailed(result.error);
+                }
+            }
+        } catch (error) {
+            console.error(`Error updating delivery status for ${result.userId}:`, error);
+        }
+    }
+}
+
+/**
+ * Broadcast notification qua Socket.IO đến specific users
+ */
+async function broadcastNotificationToUsers(userIds, notification) {
     try {
-        // Implementation sẽ được thêm trong app.js
-        console.log('📡 [Notification Service] Broadcasting notification to Socket.IO');
+        // Sẽ được implement trong app.js với Socket.IO
+        console.log('📡 [Notification Service] Broadcasting notification to users:', userIds.length);
+        
+        // TODO: Implement Socket.IO broadcast
+        // io.to(userRoom).emit('new_notification', notification);
     } catch (error) {
         console.error('Error broadcasting notification:', error);
     }
@@ -1058,5 +1131,250 @@ exports.sendCommentReplyNotification = async (post, parentCommentId, replierName
         console.log(`Đã gửi thông báo reply comment đến ${parentCommentAuthor.fullname}`);
     } catch (error) {
         console.error('Lỗi khi gửi thông báo reply comment:', error);
+    }
+};
+
+/**
+ * ATTENDANCE NOTIFICATION FUNCTION
+ * Đơn giản: chỉ thông báo chấm công cơ bản
+ */
+
+/**
+ * Gửi thông báo chấm công đơn giản
+ * Format: "Bạn đã chấm công lúc *Time* tại *Location*"
+ */
+exports.sendAttendanceNotification = async (attendanceData) => {
+    try {
+        const { employeeCode, employeeName, timestamp, deviceName } = attendanceData;
+        
+        // Format thời gian theo múi giờ Việt Nam
+        const time = new Date(timestamp).toLocaleString('vi-VN', { 
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+        
+        const message = `Bạn đã chấm công lúc ${time} tại ${deviceName || 'Unknown Device'}`;
+        
+        const notificationData = {
+            title: 'Chấm công',
+            message,
+            recipients: [employeeCode],
+            notification_type: 'attendance',
+            priority: 'medium',
+            channel: 'push',
+            data: { employeeCode, employeeName, timestamp, deviceName }
+        };
+
+        await this.sendNotification(notificationData);
+        console.log(`✅ [Notification Service] Sent attendance notification to ${employeeCode}: ${message}`);
+    } catch (error) {
+        console.error('❌ [Notification Service] Error sending attendance notification:', error);
+    }
+};
+
+/**
+ * =============================
+ * NOTIFICATION MANAGEMENT APIs
+ * =============================
+ */
+
+/**
+ * Lấy danh sách notifications của user (có pagination)
+ */
+exports.getUserNotifications = async (req, res) => {
+    try {
+        const userId = req.params.userId || req.user?.id;
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const type = req.query.type; // filter theo loại
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        const result = await Notification.getUserNotifications(userId, page, limit);
+
+        res.json({
+            success: true,
+            data: result.notifications,
+            pagination: result.pagination,
+            unreadCount: await Notification.getUnreadCount(userId)
+        });
+    } catch (error) {
+        console.error('Error getting user notifications:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * Đánh dấu notification đã đọc
+ */
+exports.markNotificationAsRead = async (req, res) => {
+    try {
+        const { notificationId } = req.params;
+        const userId = req.body.userId || req.user?.id;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        const readRecord = await NotificationRead.findOne({
+            notificationId,
+            userId
+        });
+
+        if (!readRecord) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+
+        await readRecord.markAsRead();
+
+        res.json({
+            success: true,
+            message: 'Notification marked as read'
+        });
+    } catch (error) {
+        console.error('Error marking notification as read:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * Đánh dấu tất cả notifications đã đọc cho user
+ */
+exports.markAllNotificationsAsRead = async (req, res) => {
+    try {
+        const userId = req.body.userId || req.user?.id;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        const count = await NotificationRead.markAllAsReadForUser(userId);
+
+        res.json({
+            success: true,
+            message: `Marked ${count} notifications as read`
+        });
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * Lấy số lượng unread notifications
+ */
+exports.getUnreadCount = async (req, res) => {
+    try {
+        const userId = req.params.userId || req.user?.id;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        const count = await Notification.getUnreadCount(userId);
+
+        res.json({
+            success: true,
+            unreadCount: count
+        });
+    } catch (error) {
+        console.error('Error getting unread count:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * =============================
+ * ANALYTICS APIs
+ * =============================
+ */
+
+/**
+ * Lấy analytics tổng quan của user
+ */
+exports.getUserNotificationStats = async (req, res) => {
+    try {
+        const userId = req.params.userId || req.user?.id;
+        const { startDate, endDate } = req.query;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        const stats = await NotificationRead.getUserReadingStats(userId, startDate, endDate);
+
+        res.json({
+            success: true,
+            data: {
+                ...stats,
+                readingRate: stats.total > 0 ? (stats.read / stats.total * 100).toFixed(2) : 0,
+                deliveryRate: stats.total > 0 ? (stats.delivered / stats.total * 100).toFixed(2) : 0,
+                avgReadTimeMinutes: stats.avgReadTime ? Math.round(stats.avgReadTime / 1000 / 60) : null
+            }
+        });
+    } catch (error) {
+        console.error('Error getting user notification stats:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * Lấy analytics chi tiết của một notification
+ */
+exports.getNotificationAnalytics = async (req, res) => {
+    try {
+        const { notificationId } = req.params;
+
+        const notification = await Notification.findById(notificationId);
+        if (!notification) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+
+        const deliveryStats = await NotificationRead.getDeliveryStats(notificationId);
+        
+        // Lấy chi tiết reads
+        const readDetails = await NotificationRead.find({ notificationId })
+            .select('userId read readAt deliveryStatus deliveredAt createdAt')
+            .sort({ createdAt: -1 });
+
+        res.json({
+            success: true,
+            data: {
+                notification: {
+                    id: notification._id,
+                    title: notification.title,
+                    type: notification.type,
+                    totalRecipients: notification.totalRecipients,
+                    sentCount: notification.sentCount,
+                    deliveredCount: notification.deliveredCount,
+                    readCount: notification.readCount,
+                    createdAt: notification.createdAt
+                },
+                deliveryStats,
+                readDetails: readDetails.map(r => ({
+                    userId: r.userId,
+                    read: r.read,
+                    readAt: r.readAt,
+                    deliveryStatus: r.deliveryStatus,
+                    deliveredAt: r.deliveredAt,
+                    sentAt: r.createdAt
+                })),
+                analytics: {
+                    readingRate: notification.totalRecipients > 0 ? 
+                        (notification.readCount / notification.totalRecipients * 100).toFixed(2) : 0,
+                    deliveryRate: notification.totalRecipients > 0 ? 
+                        (notification.deliveredCount / notification.totalRecipients * 100).toFixed(2) : 0
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error getting notification analytics:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 }; 

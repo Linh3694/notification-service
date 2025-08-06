@@ -20,7 +20,9 @@ class CrossServiceCommunication {
       'broadcast',
       'notification-service',
       'chat-service',
-      'workspace-backend'
+      'workspace-backend',
+      'attendance-service',
+      'notification_events'  // Channel từ attendance service
     ];
 
     console.log('🔗 [Notification Service] Subscribing to channels:', channels);
@@ -61,6 +63,9 @@ class CrossServiceCommunication {
           break;
         case 'workspace-backend':
           await this.handleWorkspaceBackendMessage(message);
+          break;
+        case 'attendance-service':
+          await this.handleAttendanceServiceMessage(message);
           break;
         default:
           console.log('⚠️ [Notification Service] Unknown service:', message.service);
@@ -600,6 +605,40 @@ class CrossServiceCommunication {
   async sendToAllServices(event, data) {
     await redisClient.publishToAllServices(event, data);
   }
+
+  // Handle messages từ attendance service
+  async handleAttendanceServiceMessage(message) {
+    console.log('⏰ [Notification Service] Processing attendance service message:', message.event);
+    
+    // Chỉ xử lý event attendance_recorded - đơn giản hóa
+    if (message.event === 'attendance_recorded') {
+      await this.handleAttendanceRecorded(message.data);
+    } else {
+      console.log('⚠️ [Notification Service] Ignoring attendance event:', message.event);
+    }
+  }
+
+  // Handler cho attendance event - đơn giản
+  async handleAttendanceRecorded(data) {
+    try {
+      const { employeeCode, employeeName, timestamp, deviceName } = data;
+      
+      console.log(`⏰ [Notification Service] Employee ${employeeName || employeeCode} recorded attendance`);
+      
+      // Sử dụng function đơn giản mới
+      const notificationController = require('../controllers/notificationController');
+      await notificationController.sendAttendanceNotification({
+        employeeCode,
+        employeeName,
+        timestamp,
+        deviceName
+      });
+    } catch (error) {
+      console.error('❌ [Notification Service] Error handling attendance recorded:', error);
+    }
+  }
+
+  // Các methods khác đã được loại bỏ để đơn giản hóa
 
   // Health check
   async healthCheck() {

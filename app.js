@@ -11,6 +11,11 @@ const database = require('./config/database');
 const redisClient = require('./config/redis');
 const crossServiceCommunication = require('./services/crossServiceCommunication');
 
+// Import models for MongoDB
+const mongoose = require('mongoose');
+const Notification = require('./models/Notification');
+const NotificationRead = require('./models/NotificationRead');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -40,10 +45,17 @@ const io = new Server(server, {
   }
 })();
 
-// Connect to MariaDB
+// Connect to databases
 const connectDB = async () => {
   try {
+    // Connect to MariaDB (existing functionality)
     await database.connect();
+    
+    // Connect to MongoDB for notifications
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/notification_service';
+    await mongoose.connect(mongoUri);
+    console.log('✅ [Notification Service] MongoDB connected for notifications');
+    
   } catch (error) {
     console.error('❌ [Notification Service] Database connection failed:', error.message);
     process.exit(1);
@@ -109,7 +121,7 @@ app.get('/health', async (req, res) => {
 const notificationRoutes = require('./routes/notificationRoutes');
 
 // Use routes
-app.use("/api/notifications", notificationRoutes);
+app.use("/api/notification", notificationRoutes);
 
 // Frappe-compatible API endpoints
 app.use("/api/method", notificationRoutes);
