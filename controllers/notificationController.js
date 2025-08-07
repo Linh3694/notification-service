@@ -1166,7 +1166,13 @@ exports.sendAttendanceNotification = async (attendanceData) => {
             notification_type: 'attendance',
             priority: 'medium',
             channel: 'push',
-            data: { employeeCode, employeeName, timestamp, deviceName }
+            data: { 
+                employeeCode, 
+                employeeName, 
+                timestamp, 
+                deviceName,
+                type: 'attendance' // Thêm type để mobile app có thể handle
+            }
         };
 
         await this.sendNotification(notificationData);
