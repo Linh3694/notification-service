@@ -1147,58 +1147,30 @@ exports.sendAttendanceNotification = async (attendanceData) => {
     try {
         const { employeeCode, employeeName, timestamp, deviceName } = attendanceData;
         
-        // Convert employeeCode to userId through database lookup
-        const database = require('../config/database');
+        // Convert employeeCode to userId using hardcode mapping for testing
         let userId = null;
         
         console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
         
-        try {
-            // Try multiple field variations to find the user
-            const searchFields = ['employee_id', 'employee_code', 'employeeId', 'employeeCode'];
-            let userFound = null;
-            
-            for (const field of searchFields) {
-                const query = { [field]: employeeCode };
-                userFound = await database.get('User', query);
-                if (userFound) {
-                    userId = userFound.name;
-                    console.log(`✅ [Notification Service] Found userId by ${field}: ${employeeCode} → ${userId}`);
-                    break;
-                }
-            }
-            
-            if (!userFound) {
-                // Fallback: try to find user where name matches employeeCode
-                const userByName = await database.get('User', { name: employeeCode });
-                if (userByName) {
-                    userId = userByName.name;
-                    console.log(`✅ [Notification Service] Found userId by name: ${employeeCode} → ${userId}`);
-                } else {
-                    // Last resort: use employeeCode as userId
-                    userId = employeeCode;
-                    console.log(`⚠️ [Notification Service] No database match for employeeCode ${employeeCode}, using as userId`);
-                    
-                    // Debug: List some users to understand database structure
-                    try {
-                        const sampleUsers = await database.getAll('User', {}, { limit: 3 });
-                        console.log(`📊 [Notification Service] Sample users in database:`, sampleUsers.map(u => ({
-                            name: u.name,
-                            employee_id: u.employee_id,
-                            employee_code: u.employee_code,
-                            employeeId: u.employeeId,
-                            employeeCode: u.employeeCode,
-                            fullname: u.fullname || u.full_name
-                        })));
-                    } catch (sampleError) {
-                        console.warn(`Could not fetch sample users:`, sampleError.message);
-                    }
-                }
-            }
-        } catch (dbError) {
-            console.warn(`❌ [Notification Service] Database error for employeeCode ${employeeCode}:`, dbError.message);
+        // Hardcode mapping for testing - THÊM MAPPING CHO CÁC EMPLOYEE KHÁC Ở ĐÂY
+        const employeeCodeToUserIdMapping = {
+            'WF01IT': 'linh.nguyenhai@wellspring.edu.vn',
+            '5729614256': 'some.user@wellspring.edu.vn',
+            'WF91SD': 'other.user@wellspring.edu.vn',
+            'WF80SD': 'another.user@wellspring.edu.vn'
+            // THÊM MAPPING CHO CÁC EMPLOYEE KHÁC Ở ĐÂY
+        };
+        
+        userId = employeeCodeToUserIdMapping[employeeCode];
+        
+        if (userId) {
+            console.log(`✅ [Notification Service] Found hardcode mapping: ${employeeCode} → ${userId}`);
+        } else {
+            // Fallback: use employeeCode as userId
             userId = employeeCode;
+            console.log(`⚠️ [Notification Service] No hardcode mapping found for ${employeeCode}, using as userId`);
         }
+
         
         // Debug: Check if user has push tokens
         try {
