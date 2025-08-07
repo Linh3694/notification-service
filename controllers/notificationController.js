@@ -1147,6 +1147,47 @@ exports.sendAttendanceNotification = async (attendanceData) => {
     try {
         const { employeeCode, employeeName, timestamp, deviceName } = attendanceData;
         
+        // Convert employeeCode to userId through database lookup
+        const database = require('../config/database');
+        let userId = null;
+        
+        console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
+        
+        try {
+            // Try to find user by employee_id field first
+            const userByEmployeeId = await database.get('User', null, { employee_id: employeeCode });
+            if (userByEmployeeId) {
+                userId = userByEmployeeId.name;
+                console.log(`✅ [Notification Service] Found userId by employee_id: ${employeeCode} → ${userId}`);
+            } else {
+                // Fallback: try to find user where name matches employeeCode
+                const userByName = await database.get('User', employeeCode);
+                if (userByName) {
+                    userId = userByName.name;
+                    console.log(`✅ [Notification Service] Found userId by name: ${employeeCode} → ${userId}`);
+                } else {
+                    // Last resort: use employeeCode as userId
+                    userId = employeeCode;
+                    console.log(`⚠️ [Notification Service] No database match, using employeeCode as userId: ${employeeCode}`);
+                }
+            }
+        } catch (dbError) {
+            console.warn(`❌ [Notification Service] Database error for employeeCode ${employeeCode}:`, dbError.message);
+            userId = employeeCode;
+        }
+        
+        // Debug: Check if user has push tokens
+        try {
+            const pushTokens = await redisClient.getPushTokens(userId);
+            const tokenCount = pushTokens ? Object.keys(pushTokens).length : 0;
+            console.log(`🔔 [Notification Service] Push tokens for userId ${userId}: ${tokenCount} tokens found`);
+            if (tokenCount === 0) {
+                console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not be logged in on mobile`);
+            }
+        } catch (redisError) {
+            console.warn(`⚠️ [Notification Service] Redis error checking push tokens:`, redisError.message);
+        }
+        
         // Format thời gian theo múi giờ Việt Nam
         const time = new Date(timestamp).toLocaleString('vi-VN', { 
             timeZone: 'Asia/Ho_Chi_Minh',
@@ -1162,7 +1203,7 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         const notificationData = {
             title: 'Chấm công',
             message,
-            recipients: [employeeCode],
+            recipients: [userId], // Use userId instead of employeeCode
             notification_type: 'attendance',
             priority: 'medium',
             channel: 'push',
@@ -1176,7 +1217,7 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         };
 
         await this.sendNotification(notificationData);
-        console.log(`✅ [Notification Service] Sent attendance notification to ${employeeCode}: ${message}`);
+        console.log(`✅ [Notification Service] Sent attendance notification to ${employeeCode} (userId: ${userId}): ${message}`);
     } catch (error) {
         console.error('❌ [Notification Service] Error sending attendance notification:', error);
     }
