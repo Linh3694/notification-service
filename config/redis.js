@@ -269,7 +269,46 @@ class RedisClient {
 
   async getPushTokens(userId) {
     const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
-    return await this.client.hGetAll(key);
+    const rawTokens = await this.client.hGetAll(key);
+    
+    if (!rawTokens || Object.keys(rawTokens).length === 0) {
+      return null;
+    }
+    
+    // Parse tokens from both raw and JSON format
+    const parsedTokens = {};
+    for (const [deviceId, tokenData] of Object.entries(rawTokens)) {
+      try {
+        let token;
+        
+        // Handle both raw token and JSON format
+        if (tokenData.startsWith('ExponentPushToken[')) {
+          // Raw token format (legacy support)
+          token = tokenData;
+          console.log(`📱 [getPushTokens] Device ${deviceId} using raw token format for user ${userId}`);
+        } else {
+          // JSON format
+          const parsedData = JSON.parse(tokenData);
+          token = parsedData.token;
+          console.log(`📱 [getPushTokens] Device ${deviceId} using JSON token format for user ${userId}`);
+        }
+        
+        parsedTokens[deviceId] = token;
+        
+      } catch (parseError) {
+        console.warn(`⚠️ [getPushTokens] Failed to parse token data for device ${deviceId} (user: ${userId}):`, parseError.message);
+        console.warn(`📄 Raw token data: ${tokenData.substring(0, 50)}...`);
+        continue;
+      }
+    }
+    
+    if (Object.keys(parsedTokens).length === 0) {
+      console.log(`📱 [getPushTokens] No valid push tokens found for user: ${userId}`);
+      return null;
+    }
+    
+    console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid push token(s) for user: ${userId}`);
+    return parsedTokens;
   }
 
   async removePushToken(userId, platform = 'expo') {
