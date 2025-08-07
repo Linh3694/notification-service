@@ -1154,12 +1154,21 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
         
         try {
-            // Try to find user by employee_id field first
-            const userByEmployeeId = await database.get('User', { employee_id: employeeCode });
-            if (userByEmployeeId) {
-                userId = userByEmployeeId.name;
-                console.log(`✅ [Notification Service] Found userId by employee_id: ${employeeCode} → ${userId}`);
-            } else {
+            // Try multiple field variations to find the user
+            const searchFields = ['employee_id', 'employee_code', 'employeeId', 'employeeCode'];
+            let userFound = null;
+            
+            for (const field of searchFields) {
+                const query = { [field]: employeeCode };
+                userFound = await database.get('User', query);
+                if (userFound) {
+                    userId = userFound.name;
+                    console.log(`✅ [Notification Service] Found userId by ${field}: ${employeeCode} → ${userId}`);
+                    break;
+                }
+            }
+            
+            if (!userFound) {
                 // Fallback: try to find user where name matches employeeCode
                 const userByName = await database.get('User', { name: employeeCode });
                 if (userByName) {
@@ -1168,7 +1177,22 @@ exports.sendAttendanceNotification = async (attendanceData) => {
                 } else {
                     // Last resort: use employeeCode as userId
                     userId = employeeCode;
-                    console.log(`⚠️ [Notification Service] No database match, using employeeCode as userId: ${employeeCode}`);
+                    console.log(`⚠️ [Notification Service] No database match for employeeCode ${employeeCode}, using as userId`);
+                    
+                    // Debug: List some users to understand database structure
+                    try {
+                        const sampleUsers = await database.getAll('User', {}, { limit: 3 });
+                        console.log(`📊 [Notification Service] Sample users in database:`, sampleUsers.map(u => ({
+                            name: u.name,
+                            employee_id: u.employee_id,
+                            employee_code: u.employee_code,
+                            employeeId: u.employeeId,
+                            employeeCode: u.employeeCode,
+                            fullname: u.fullname || u.full_name
+                        })));
+                    } catch (sampleError) {
+                        console.warn(`Could not fetch sample users:`, sampleError.message);
+                    }
                 }
             }
         } catch (dbError) {
@@ -1183,6 +1207,16 @@ exports.sendAttendanceNotification = async (attendanceData) => {
             console.log(`🔔 [Notification Service] Push tokens for userId ${userId}: ${tokenCount} tokens found`);
             if (tokenCount === 0) {
                 console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not be logged in on mobile`);
+                
+                // Debug: List all available push token keys in Redis
+                try {
+                    const allKeys = await redisClient.client.keys('push_tokens:*');
+                    console.log(`📊 [Notification Service] Available push token keys in Redis:`, allKeys.slice(0, 5));
+                } catch (keysError) {
+                    console.warn(`Could not list Redis keys:`, keysError.message);
+                }
+            } else {
+                console.log(`🔔 [Notification Service] Push tokens for ${userId}:`, pushTokens);
             }
         } catch (redisError) {
             console.warn(`⚠️ [Notification Service] Redis error checking push tokens:`, redisError.message);
