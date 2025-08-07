@@ -1140,6 +1140,52 @@ exports.sendCommentReplyNotification = async (post, parentCommentId, replierName
  */
 
 /**
+ * Dynamic lookup employeeCode to userId from Frappe database
+ */
+async function lookupUserIdByEmployeeCode(employeeCode) {
+    try {
+        console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
+        
+        // Try to fetch from Frappe Employee doctype
+        const employeeQuery = `SELECT email FROM \`tabEmployee\` WHERE employee_id = ? OR name = ? LIMIT 1`;
+        const employeeResult = await database.query(employeeQuery, [employeeCode, employeeCode]);
+        
+        if (employeeResult && employeeResult.length > 0) {
+            const email = employeeResult[0].email;
+            if (email) {
+                console.log(`✅ [Notification Service] Found Employee mapping: ${employeeCode} → ${email}`);
+                return email;
+            }
+        }
+        
+        // Fallback: Try User doctype with custom field
+        const userQuery = `SELECT name, email FROM \`tabUser\` WHERE employee_id = ? OR employee_code = ? OR name = ? LIMIT 1`;
+        const userResult = await database.query(userQuery, [employeeCode, employeeCode, employeeCode]);
+        
+        if (userResult && userResult.length > 0) {
+            const user = userResult[0];
+            const userId = user.email || user.name;
+            console.log(`✅ [Notification Service] Found User mapping: ${employeeCode} → ${userId}`);
+            return userId;
+        }
+        
+        // Final fallback: Check if employeeCode is already an email
+        if (employeeCode && employeeCode.includes('@')) {
+            console.log(`✅ [Notification Service] EmployeeCode is already email: ${employeeCode}`);
+            return employeeCode;
+        }
+        
+        console.log(`⚠️ [Notification Service] No mapping found for ${employeeCode}, using as-is`);
+        return employeeCode;
+        
+    } catch (error) {
+        console.error(`❌ [Notification Service] Error looking up userId:`, error);
+        // Fallback to employeeCode
+        return employeeCode;
+    }
+}
+
+/**
  * Gửi thông báo chấm công đơn giản
  * Format: "Bạn đã chấm công lúc *Time* tại *Location*"
  */
@@ -1147,29 +1193,8 @@ exports.sendAttendanceNotification = async (attendanceData) => {
     try {
         const { employeeCode, employeeName, timestamp, deviceName } = attendanceData;
         
-        // Convert employeeCode to userId using hardcode mapping for testing
-        let userId = null;
-        
-        console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
-        
-        // Hardcode mapping for testing - THÊM MAPPING CHO CÁC EMPLOYEE KHÁC Ở ĐÂY
-        const employeeCodeToUserIdMapping = {
-            'WF01IT': 'linh.nguyenhai@wellspring.edu.vn',
-            '5729614256': 'some.user@wellspring.edu.vn',
-            'WF91SD': 'other.user@wellspring.edu.vn',
-            'WF80SD': 'another.user@wellspring.edu.vn'
-            // THÊM MAPPING CHO CÁC EMPLOYEE KHÁC Ở ĐÂY
-        };
-        
-        userId = employeeCodeToUserIdMapping[employeeCode];
-        
-        if (userId) {
-            console.log(`✅ [Notification Service] Found hardcode mapping: ${employeeCode} → ${userId}`);
-        } else {
-            // Fallback: use employeeCode as userId
-            userId = employeeCode;
-            console.log(`⚠️ [Notification Service] No hardcode mapping found for ${employeeCode}, using as userId`);
-        }
+        // Convert employeeCode to userId using database lookup
+        const userId = await lookupUserIdByEmployeeCode(employeeCode);
 
         
         // Debug: Check if user has push tokens
@@ -1177,18 +1202,10 @@ exports.sendAttendanceNotification = async (attendanceData) => {
             const pushTokens = await redisClient.getPushTokens(userId);
             const tokenCount = pushTokens ? Object.keys(pushTokens).length : 0;
             console.log(`🔔 [Notification Service] Push tokens for userId ${userId}: ${tokenCount} tokens found`);
+            
             if (tokenCount === 0) {
-                console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not be logged in on mobile`);
-                
-                // Debug: List all available push token keys in Redis
-                try {
-                    const allKeys = await redisClient.client.keys('push_tokens:*');
-                    console.log(`📊 [Notification Service] Available push token keys in Redis:`, allKeys.slice(0, 5));
-                } catch (keysError) {
-                    console.warn(`Could not list Redis keys:`, keysError.message);
-                }
-            } else {
-                console.log(`🔔 [Notification Service] Push tokens for ${userId}:`, pushTokens);
+                console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not have the mobile app or not logged in`);
+                // Still proceed to save notification in database for later delivery
             }
         } catch (redisError) {
             console.warn(`⚠️ [Notification Service] Redis error checking push tokens:`, redisError.message);
