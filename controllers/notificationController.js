@@ -1148,7 +1148,7 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
         
         // Try to fetch from Frappe Employee doctype
         const employeeQuery = `SELECT email FROM \`tabEmployee\` WHERE employee_id = ? OR name = ? LIMIT 1`;
-        const employeeResult = await database.query(employeeQuery, [employeeCode, employeeCode]);
+        const employeeResult = await database.sqlQuery(employeeQuery, [employeeCode, employeeCode]);
         
         if (employeeResult && employeeResult.length > 0) {
             const email = employeeResult[0].email;
@@ -1160,7 +1160,7 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
         
         // Fallback: Try User doctype with custom field
         const userQuery = `SELECT name, email FROM \`tabUser\` WHERE employee_id = ? OR employee_code = ? OR name = ? LIMIT 1`;
-        const userResult = await database.query(userQuery, [employeeCode, employeeCode, employeeCode]);
+        const userResult = await database.sqlQuery(userQuery, [employeeCode, employeeCode, employeeCode]);
         
         if (userResult && userResult.length > 0) {
             const user = userResult[0];
