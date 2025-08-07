@@ -1,60 +1,51 @@
 const jwt = require('jsonwebtoken');
-const database = require('../config/database');
 
+// Middleware xác thực token cho Notification Service (giống attendance service)
 const authenticate = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ 
+      success: false,
+      message: "Authorization header missing or invalid",
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  const token = authHeader.split(" ")[1];
+
   try {
-    const authHeader = req.headers.authorization;
+    const secret = process.env.JWT_SECRET || "breakpoint";
+    const decoded = jwt.verify(token, secret);
+
+    // Support multiple token formats (giống attendance service):
+    // - Web app uses 'id' field
+    // - Parent portal uses 'userId' field  
+    // - Frappe JWT uses 'user' field (email)
+    const userId = decoded.id || decoded.userId || decoded.user || decoded.name;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
+    if (!userId) {
+      return res.status(401).json({ 
         success: false,
-        message: 'Access token required'
+        message: "Invalid token structure",
+        timestamp: new Date().toISOString()
       });
     }
 
-    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+    // Store user info from token (không cần database lookup)
+    req.user = {
+      _id: userId,
+      name: userId,
+      email: decoded.email || decoded.user || null,
+      role: decoded.role || null,
+      employeeCode: decoded.employeeCode || null,
+      fullname: decoded.fullname || decoded.name || null
+    };
     
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access token required'
-      });
-    }
-
-    // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    if (!decoded) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid token'
-      });
-    }
-
-    // Get user from database
-    const user = await database.get('User', decoded.userId || decoded.name);
-    
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Check if user is active
-    if (user.disabled === 1) {
-      return res.status(401).json({
-        success: false,
-        message: 'User account is disabled'
-      });
-    }
-
-    // Add user to request object
-    req.user = user;
+    console.log(`✅ [Notification Service] User authenticated: ${userId}`);
     next();
-    
   } catch (error) {
-    console.error('Authentication error:', error);
+    console.warn('❌ [Notification Service] Token verification failed:', error.message);
     
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({
