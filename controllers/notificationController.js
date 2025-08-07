@@ -1155,13 +1155,13 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         
         try {
             // Try to find user by employee_id field first
-            const userByEmployeeId = await database.get('User', null, { employee_id: employeeCode });
+            const userByEmployeeId = await database.get('User', { employee_id: employeeCode });
             if (userByEmployeeId) {
                 userId = userByEmployeeId.name;
                 console.log(`✅ [Notification Service] Found userId by employee_id: ${employeeCode} → ${userId}`);
             } else {
                 // Fallback: try to find user where name matches employeeCode
-                const userByName = await database.get('User', employeeCode);
+                const userByName = await database.get('User', { name: employeeCode });
                 if (userByName) {
                     userId = userByName.name;
                     console.log(`✅ [Notification Service] Found userId by name: ${employeeCode} → ${userId}`);
