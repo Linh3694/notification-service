@@ -240,11 +240,15 @@ class RedisClient {
       return;
     }
     const userChannel = process.env.REDIS_USER_CHANNEL || 'user_events';
+    console.log(`[Notification Service] Subscribing user events on channel: ${userChannel}`);
     await this.subscribe(userChannel, async (msg) => {
       try {
         const data = typeof msg === 'string' ? JSON.parse(msg) : msg;
         if (!data || !data.type) return;
         switch (data.type) {
+          case 'user_events_ping':
+            console.log('[Notification Service] user_events_ping received');
+            break;
           case 'user_created':
           case 'user_updated':
             // Upsert user info into own storage if needed in future
