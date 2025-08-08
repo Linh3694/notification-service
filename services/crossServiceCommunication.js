@@ -22,7 +22,8 @@ class CrossServiceCommunication {
       'chat-service',
       'workspace-backend',
       'attendance-service',
-      'notification_events'  // Channel từ attendance service
+      'notification_events',  // Channel từ attendance service
+      'social-service'
     ];
 
     console.log('🔗 [Notification Service] Subscribing to channels:', channels);
@@ -49,6 +50,9 @@ class CrossServiceCommunication {
       });
 
       switch (message.service) {
+        case 'social-service':
+          await this.handleSocialServiceMessage(message);
+          break;
         case 'ticket-service':
           await this.handleTicketServiceMessage(message);
           break;
@@ -72,6 +76,45 @@ class CrossServiceCommunication {
       }
     } catch (error) {
       console.error('❌ [Notification Service] Error handling message:', error);
+    }
+  }
+
+  // Xử lý message từ social-service
+  async handleSocialServiceMessage(message) {
+    const { event, data } = message;
+    switch (event) {
+      case 'post_tagged':
+        await this.sendNotification({
+          title: 'Bạn được tag trong một bài viết',
+          message: `${data.authorName} đã tag bạn trong một bài viết`,
+          recipients: data.recipients,
+          type: 'post_tagged',
+          priority: 'low',
+          data,
+        });
+        break;
+      case 'post_reacted':
+        await this.sendNotification({
+          title: 'Bài viết của bạn có phản hồi mới',
+          message: `${data.userId || 'Một người dùng'} đã react (${data.reactionType}) bài viết của bạn`,
+          recipients: [data.recipientId],
+          type: 'post_reacted',
+          priority: 'low',
+          data,
+        });
+        break;
+      case 'post_commented':
+        await this.sendNotification({
+          title: 'Bài viết của bạn có bình luận mới',
+          message: data.content,
+          recipients: [data.recipientId],
+          type: 'post_commented',
+          priority: 'low',
+          data,
+        });
+        break;
+      default:
+        console.log('⚠️ [Notification Service] Unknown social event:', event);
     }
   }
 
