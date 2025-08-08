@@ -36,6 +36,14 @@ const io = new Server(server, {
     io.adapter(createAdapter(redisClient.getPubClient(), redisClient.getSubClient()));
     console.log('✅ [Notification Service] Redis adapter setup complete');
     
+    // Subscribe user events channel (feature-flagged by ENABLE_USER_EVENTS)
+    try {
+      await redisClient.subscribeUserEvents();
+      console.log(`🔔 [Notification Service] Subscribed to user events channel: ${process.env.REDIS_USER_CHANNEL || 'user_events'}`);
+    } catch (e) {
+      console.warn('⚠️ [Notification Service] Failed to subscribe user events:', e.message);
+    }
+
     // Initialize cross-service communication
     await crossServiceCommunication.initializeSubscriptions();
     
