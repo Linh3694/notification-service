@@ -233,6 +233,35 @@ class RedisClient {
     }
   }
 
+  // === User events subscription (feature-flagged) ===
+  async subscribeUserEvents() {
+    if (process.env.ENABLE_USER_EVENTS !== 'true') {
+      console.log('[Notification Service] User events disabled by ENABLE_USER_EVENTS');
+      return;
+    }
+    const userChannel = process.env.REDIS_USER_CHANNEL || 'user_events';
+    await this.subscribe(userChannel, async (msg) => {
+      try {
+        const data = typeof msg === 'string' ? JSON.parse(msg) : msg;
+        if (!data || !data.type) return;
+        switch (data.type) {
+          case 'user_created':
+          case 'user_updated':
+            // Upsert user info into own storage if needed in future
+            console.log('[Notification Service] user upsert event received:', data.user?.email || data.user_id);
+            break;
+          case 'user_deleted':
+            console.log('[Notification Service] user deleted event received:', data.user?.email || data.user_id);
+            break;
+          default:
+            break;
+        }
+      } catch (e) {
+        console.warn('[Notification Service] Failed handling user event:', e.message);
+      }
+    });
+  }
+
   // Multi-channel subscription
   async subscribeToChannels(channels, callback) {
     try {
