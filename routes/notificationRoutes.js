@@ -25,6 +25,83 @@ router.delete("/:notificationId", authenticate, notificationController.deleteNot
 // Xóa tất cả thông báo
 router.delete("/", authenticate, notificationController.deleteAllNotifications);
 
+// ============================================
+// Compatibility aliases for chat-service client
+// ============================================
+// POST /api/notifications/send
+router.post("/send", async (req, res) => {
+  try {
+    const { type, title, body: message, recipients, data, priority = 'medium', channel = 'push' } = req.body || {};
+    if (!title || !message || !recipients) {
+      return res.status(400).json({ success: false, message: 'title, body, recipients are required' });
+    }
+
+    const normalizedRecipients = Array.isArray(recipients) ? recipients : (typeof recipients === 'string' ? [recipients] : []);
+
+    const result = await notificationController.sendNotification({
+      title,
+      message,
+      recipients: normalizedRecipients,
+      notification_type: type || 'system',
+      priority,
+      channel,
+      data: data || {}
+    });
+
+    return res.status(200).json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error in /api/notifications/send:', error.message);
+    return res.status(500).json({ success: false, message: 'Failed to send notification' });
+  }
+});
+
+// POST /api/notifications/send-bulk
+router.post("/send-bulk", async (req, res) => {
+  try {
+    const { notifications } = req.body || {};
+    if (!Array.isArray(notifications) || notifications.length === 0) {
+      return res.status(400).json({ success: false, message: 'notifications array is required' });
+    }
+
+    for (const n of notifications) {
+      const recipients = Array.isArray(n.recipients) ? n.recipients : (typeof n.recipients === 'string' ? [n.recipients] : []);
+      await notificationController.sendNotification({
+        title: n.title,
+        message: n.body,
+        recipients,
+        notification_type: n.type || 'system',
+        priority: n.priority || 'medium',
+        channel: n.channel || 'push',
+        data: n.data || {}
+      });
+    }
+
+    return res.status(200).json({ success: true, count: notifications.length });
+  } catch (error) {
+    console.error('Error in /api/notifications/send-bulk:', error.message);
+    return res.status(500).json({ success: false, message: 'Failed to send bulk notifications' });
+  }
+});
+
+// POST /api/notifications/push-tokens (register)
+router.post("/push-tokens", authenticate, async (req, res) => {
+  try {
+    // Reuse controller logic
+    return notificationController.registerDevice(req, res);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to register push token' });
+  }
+});
+
+// DELETE /api/notifications/push-tokens (unregister)
+router.delete("/push-tokens", authenticate, async (req, res) => {
+  try {
+    return notificationController.unregisterDevice(req, res);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Failed to unregister push token' });
+  }
+});
+
 // =============================
 // NEW DATABASE-BASED APIs
 // =============================

@@ -130,6 +130,8 @@ const notificationRoutes = require('./routes/notificationRoutes');
 
 // Use routes
 app.use("/api/notification", notificationRoutes);
+// Compatibility alias for clients expecting plural path
+app.use("/api/notifications", notificationRoutes);
 
 // Frappe-compatible API endpoints
 app.use("/api/method", notificationRoutes);
