@@ -8,6 +8,7 @@ const authenticate = async (req, res, next) => {
     return res.status(401).json({ 
       success: false,
       message: "Authorization header missing or invalid",
+      code: 'MISSING_TOKEN',
       timestamp: new Date().toISOString()
     });
   }
@@ -50,20 +51,23 @@ const authenticate = async (req, res, next) => {
     if (error.name === 'JsonWebTokenError') {
       return res.status(401).json({
         success: false,
-        message: 'Invalid token'
+        message: 'Invalid token',
+        code: 'INVALID_TOKEN'
       });
     }
     
     if (error.name === 'TokenExpiredError') {
       return res.status(401).json({
         success: false,
-        message: 'Token expired'
+        message: 'Token expired',
+        code: 'TOKEN_EXPIRED'
       });
     }
     
     return res.status(500).json({
       success: false,
-      message: 'Authentication failed'
+      message: 'Authentication failed',
+      code: 'AUTH_FAILED'
     });
   }
 };
