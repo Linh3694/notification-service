@@ -124,6 +124,9 @@ router.get("/user/:userId/stats", notificationController.getUserNotificationStat
 // Analytics: Chi tiết notification
 router.get("/:notificationId/analytics", notificationController.getNotificationAnalytics);
 
+// Test attendance notification
+router.post("/test/attendance", notificationController.testAttendanceNotification);
+
 // Test cross-service communication
 router.post("/test/ticket-service", async (req, res) => {
   try {

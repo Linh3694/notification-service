@@ -1247,6 +1247,37 @@ exports.sendAttendanceNotification = async (attendanceData) => {
 };
 
 /**
+ * Test endpoint để simulate attendance event
+ */
+exports.testAttendanceNotification = async (req, res) => {
+  try {
+    const { employeeCode, employeeName, timestamp, deviceName } = req.body;
+
+    if (!employeeCode) {
+      return res.status(400).json({ error: 'employeeCode is required' });
+    }
+
+    console.log('🧪 Testing attendance notification for:', employeeCode);
+
+    await this.sendAttendanceNotification({
+      employeeCode,
+      employeeName: employeeName || 'Test Employee',
+      timestamp: timestamp || new Date().toISOString(),
+      deviceName: deviceName || 'Test Device'
+    });
+
+    res.json({
+      success: true,
+      message: 'Attendance notification sent successfully',
+      data: { employeeCode, employeeName, timestamp, deviceName }
+    });
+  } catch (error) {
+    console.error('Error testing attendance notification:', error);
+    res.status(500).json({ error: 'Failed to send test notification' });
+  }
+};
+
+/**
  * =============================
  * NOTIFICATION MANAGEMENT APIs
  * =============================

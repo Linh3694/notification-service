@@ -49,6 +49,12 @@ class CrossServiceCommunication {
         timestamp: message.timestamp
       });
 
+      // Handle attendance events from notification_events channel
+      if (message.service === 'attendance-service' && message.type === 'attendance_recorded') {
+        await this.handleAttendanceServiceMessage(message);
+        return;
+      }
+
       switch (message.service) {
         case 'social-service':
           await this.handleSocialServiceMessage(message);
