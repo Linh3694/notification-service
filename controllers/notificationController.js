@@ -261,16 +261,61 @@ exports.sendNotification = async (notificationData) => {
 };
 
 /**
+ * Lấy push subscription từ Frappe database cho user
+ */
+async function getPushSubscriptionFromFrappe(userEmail) {
+    try {
+        const query = `
+            SELECT subscription_json 
+            FROM \`tabPush Subscription\` 
+            WHERE user = ? AND enabled = 1
+            LIMIT 1
+        `;
+        const result = await database.sqlQuery(query, [userEmail]);
+        
+        if (result && result.length > 0 && result[0].subscription_json) {
+            console.log(`✅ [Notification Service] Found push subscription for ${userEmail}`);
+            return result[0].subscription_json;
+        }
+        
+        console.log(`⚠️ [Notification Service] No push subscription found for ${userEmail}`);
+        return null;
+    } catch (error) {
+        console.error(`❌ [Notification Service] Error getting push subscription for ${userEmail}:`, error);
+        return null;
+    }
+}
+
+/**
  * Gửi push notifications đến danh sách users và trả về kết quả
+ * Updated: Query push subscriptions từ Frappe database thay vì Redis
  */
 async function sendPushNotificationsToUsers(userIds, title, message, data = {}) {
     const results = [];
     
     for (const userId of userIds) {
         try {
-            const userTokens = await redisClient.getPushTokens(userId);
-            if (userTokens && Object.keys(userTokens).length > 0) {
-                const tokens = Object.values(userTokens);
+            console.log(`📱 [Notification Service] Getting push subscription for ${userId}`);
+            
+            // Try to get from Frappe database first (for PWA)
+            const frappeSubscription = await getPushSubscriptionFromFrappe(userId);
+            
+            let tokens = [];
+            
+            if (frappeSubscription) {
+                // PWA push subscription
+                tokens.push(frappeSubscription);
+                console.log(`✅ [Notification Service] Using Frappe subscription for ${userId}`);
+            } else {
+                // Fallback to Redis (for mobile app tokens)
+                const userTokens = await redisClient.getPushTokens(userId);
+                if (userTokens && Object.keys(userTokens).length > 0) {
+                    tokens = Object.values(userTokens);
+                    console.log(`✅ [Notification Service] Using Redis tokens for ${userId}: ${tokens.length} token(s)`);
+                }
+            }
+            
+            if (tokens.length > 0) {
                 const tickets = await sendPushNotifications(tokens, title, message, data);
                 
                 results.push({
@@ -280,6 +325,7 @@ async function sendPushNotificationsToUsers(userIds, title, message, data = {}) 
                     success: true
                 });
             } else {
+                console.log(`⚠️ [Notification Service] No push tokens found for ${userId}`);
                 results.push({
                     userId,
                     tokens: [],
@@ -289,7 +335,7 @@ async function sendPushNotificationsToUsers(userIds, title, message, data = {}) 
                 });
             }
         } catch (error) {
-            console.error(`Error sending push to user ${userId}:`, error);
+            console.error(`❌ [Notification Service] Error sending push to user ${userId}:`, error);
             results.push({
                 userId,
                 tokens: [],
