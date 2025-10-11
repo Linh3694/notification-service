@@ -26,7 +26,57 @@ function translateStatus(status) {
 }
 
 /**
+ * Gửi Web Push notification (cho PWA)
+ * Sử dụng webpush library để gửi trực tiếp
+ */
+async function sendWebPushNotification(subscriptionString, title, body, data = {}) {
+    try {
+        const webpush = require('web-push');
+        
+        // Parse subscription từ string
+        const subscription = typeof subscriptionString === 'string' 
+            ? JSON.parse(subscriptionString) 
+            : subscriptionString;
+
+        // Set VAPID details (lấy từ Frappe hoặc env)
+        // Trong production, cần config VAPID keys riêng cho notification-service
+        // Hoặc share keys với Frappe
+        const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+        const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+        const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@wellspring.edu.vn';
+
+        if (vapidPublicKey && vapidPrivateKey) {
+            webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+        }
+
+        // Create payload
+        const payload = JSON.stringify({
+            title,
+            body,
+            icon: '/icon.png',
+            badge: '/icon.png',
+            data: data || {},
+            timestamp: Date.now()
+        });
+
+        // Send notification
+        const result = await webpush.sendNotification(subscription, payload);
+        return { success: true, result };
+        
+    } catch (error) {
+        // If subscription is invalid (410 Gone), return error to remove it
+        if (error.statusCode === 410 || error.statusCode === 404) {
+            console.log('⚠️ Web push subscription expired or invalid');
+            return { success: false, expired: true };
+        }
+        console.error('❌ Error sending web push:', error.message);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
  * Gửi thông báo đến các thiết bị theo danh sách token
+ * Support cả Expo Push (mobile app) và Web Push (PWA)
  * @param {Array} pushTokens - Danh sách token thiết bị
  * @param {String} title - Tiêu đề thông báo
  * @param {String} body - Nội dung thông báo
@@ -34,43 +84,65 @@ function translateStatus(status) {
  */
 const sendPushNotifications = async (pushTokens, title, body, data = {}) => {
     try {
-        // Tạo danh sách messages để gửi
-        let messages = [];
-
-        // Kiểm tra và lọc các token hợp lệ
-        for (let pushToken of pushTokens) {
-            if (!Expo.isExpoPushToken(pushToken)) {
-                console.error(`Push token ${pushToken} không phải là token Expo hợp lệ`);
-                continue;
-            }
-
-            // Thêm thông báo vào danh sách
-            messages.push({
-                to: pushToken,
-                sound: 'default',
-                title,
-                body,
-                data,
-            });
-        }
-
-        // Chia thành chunks để tránh vượt quá giới hạn của Expo
-        let chunks = expo.chunkPushNotifications(messages);
+        let expoMessages = [];
+        let webPushTokens = [];
         let tickets = [];
 
-        // Gửi từng chunk
-        for (let chunk of chunks) {
-            try {
-                let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-                tickets.push(...ticketChunk);
-            } catch (error) {
-                console.error('Lỗi khi gửi thông báo:', error);
+        // Phân loại tokens: Expo vs Web Push
+        for (let pushToken of pushTokens) {
+            // Check if it's Expo token (format: ExponentPushToken[xxx])
+            if (Expo.isExpoPushToken(pushToken)) {
+                expoMessages.push({
+                    to: pushToken,
+                    sound: 'default',
+                    title,
+                    body,
+                    data,
+                });
+            } 
+            // Check if it's Web Push subscription (JSON string or object)
+            else if (typeof pushToken === 'string' && pushToken.includes('endpoint')) {
+                webPushTokens.push(pushToken);
+            }
+            else {
+                console.warn(`⚠️ Unknown token format: ${pushToken.substring(0, 50)}...`);
+            }
+        }
+
+        console.log(`📱 Token breakdown: ${expoMessages.length} Expo, ${webPushTokens.length} Web Push`);
+
+        // Gửi Expo Push Notifications
+        if (expoMessages.length > 0) {
+            let chunks = expo.chunkPushNotifications(expoMessages);
+            for (let chunk of chunks) {
+                try {
+                    let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
+                    tickets.push(...ticketChunk);
+                    console.log(`✅ Sent ${chunk.length} Expo push notifications`);
+                } catch (error) {
+                    console.error('❌ Error sending Expo push:', error);
+                }
+            }
+        }
+
+        // Gửi Web Push Notifications
+        if (webPushTokens.length > 0) {
+            for (let subscription of webPushTokens) {
+                try {
+                    const result = await sendWebPushNotification(subscription, title, body, data);
+                    if (result) {
+                        tickets.push({ status: 'ok', platform: 'web' });
+                        console.log(`✅ Sent web push notification`);
+                    }
+                } catch (error) {
+                    console.error('❌ Error sending web push:', error);
+                }
             }
         }
 
         return tickets;
     } catch (error) {
-        console.error('Lỗi trong quá trình gửi thông báo:', error);
+        console.error('❌ Error in sendPushNotifications:', error);
         return [];
     }
 };
