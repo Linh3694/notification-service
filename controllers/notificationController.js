@@ -1186,7 +1186,7 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
 }
 
 /**
- * Gửi thông báo chấm công đơn giản
+ * Gửi thông báo chấm công cho nhân viên
  * Format: "Bạn đã chấm công lúc *Time* tại *Location*"
  */
 exports.sendAttendanceNotification = async (attendanceData) => {
@@ -1195,7 +1195,6 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         
         // Convert employeeCode to userId using database lookup
         const userId = await lookupUserIdByEmployeeCode(employeeCode);
-
         
         // Debug: Check if user has push tokens
         try {
@@ -1205,7 +1204,6 @@ exports.sendAttendanceNotification = async (attendanceData) => {
             
             if (tokenCount === 0) {
                 console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not have the mobile app or not logged in`);
-                // Still proceed to save notification in database for later delivery
             }
         } catch (redisError) {
             console.warn(`⚠️ [Notification Service] Redis error checking push tokens:`, redisError.message);
@@ -1226,7 +1224,7 @@ exports.sendAttendanceNotification = async (attendanceData) => {
         const notificationData = {
             title: 'Chấm công',
             message,
-            recipients: [userId], // Use userId instead of employeeCode
+            recipients: [userId],
             notification_type: 'attendance',
             priority: 'medium',
             channel: 'push',
@@ -1235,14 +1233,106 @@ exports.sendAttendanceNotification = async (attendanceData) => {
                 employeeName, 
                 timestamp, 
                 deviceName,
-                type: 'attendance' // Thêm type để mobile app có thể handle
+                type: 'attendance'
             }
         };
 
         await this.sendNotification(notificationData);
-        console.log(`✅ [Notification Service] Sent attendance notification to ${employeeCode} (userId: ${userId}): ${message}`);
+        console.log(`✅ [Notification Service] Sent employee attendance notification to ${employeeCode} (userId: ${userId})`);
     } catch (error) {
-        console.error('❌ [Notification Service] Error sending attendance notification:', error);
+        console.error('❌ [Notification Service] Error sending employee attendance notification:', error);
+    }
+};
+
+/**
+ * Gửi thông báo chấm công học sinh đến phụ huynh
+ * Khi học sinh check in/out tại cổng trường, gửi notification đến guardians
+ */
+exports.sendStudentAttendanceNotification = async (attendanceData) => {
+    try {
+        const { employeeCode, employeeName, timestamp, deviceName, checkInTime, checkOutTime } = attendanceData;
+        
+        console.log(`👨‍🎓 [Notification Service] Processing student attendance for: ${employeeCode} (${employeeName})`);
+        
+        // Step 1: Check if employeeCode is a student
+        const studentQuery = `SELECT name, student_name, student_code FROM \`tabCRM Student\` WHERE student_code = ? LIMIT 1`;
+        const studentResult = await database.sqlQuery(studentQuery, [employeeCode]);
+        
+        if (!studentResult || studentResult.length === 0) {
+            console.log(`⚠️ [Notification Service] No student found with code: ${employeeCode}`);
+            return;
+        }
+        
+        const student = studentResult[0];
+        console.log(`✅ [Notification Service] Found student: ${student.student_name} (${student.student_code})`);
+        
+        // Step 2: Get guardians for this student
+        const guardianQuery = `
+            SELECT DISTINCT g.guardian_id, g.guardian_name, g.email
+            FROM \`tabCRM Family Relationship\` fr
+            INNER JOIN \`tabCRM Guardian\` g ON g.name = fr.guardian
+            WHERE fr.student = ? AND fr.access = 1
+        `;
+        const guardians = await database.sqlQuery(guardianQuery, [student.name]);
+        
+        if (!guardians || guardians.length === 0) {
+            console.log(`⚠️ [Notification Service] No guardians found for student ${student.student_code}`);
+            return;
+        }
+        
+        console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s) for student ${student.student_name}`);
+        
+        // Step 3: Format time
+        const time = new Date(timestamp).toLocaleString('vi-VN', { 
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+        
+        // Step 4: Determine check-in or check-out
+        // Logic: nếu chưa có checkInTime, hoặc có checkInTime và timestamp này gần với checkInTime hơn checkOutTime
+        const isCheckIn = !checkInTime || 
+            (checkInTime && checkOutTime && 
+             Math.abs(new Date(timestamp) - new Date(checkInTime)) < Math.abs(new Date(timestamp) - new Date(checkOutTime)));
+        
+        const action = isCheckIn ? 'vào trường' : 'ra khỏi trường';
+        const title = isCheckIn ? '✅ Con đã đến trường' : '👋 Con đã về';
+        
+        const message = `${student.student_name} đã chấm công ${action} lúc ${time} tại ${deviceName || 'cổng trường'}`;
+        
+        // Step 5: Create guardian user emails (format: guardian_id@parent.wellspring.edu.vn)
+        const recipients = guardians.map(g => `${g.guardian_id}@parent.wellspring.edu.vn`);
+        
+        console.log(`📤 [Notification Service] Sending student attendance notification to ${recipients.length} guardian(s):`, recipients);
+        
+        const notificationData = {
+            title,
+            message,
+            recipients,
+            notification_type: 'student_attendance',
+            priority: 'high',
+            channel: 'push',
+            data: { 
+                studentCode: student.student_code,
+                studentName: student.student_name, 
+                timestamp, 
+                deviceName,
+                checkInTime,
+                checkOutTime,
+                action,
+                isCheckIn,
+                type: 'student_attendance'
+            }
+        };
+
+        await this.sendNotification(notificationData);
+        console.log(`✅ [Notification Service] Sent student attendance notification to ${recipients.length} guardian(s)`);
+        
+    } catch (error) {
+        console.error('❌ [Notification Service] Error sending student attendance notification:', error);
     }
 };
 

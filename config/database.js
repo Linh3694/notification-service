@@ -37,34 +37,9 @@ class Database {
   // SQL query method for Frappe database queries
   async sqlQuery(sqlString, params = []) {
     try {
-      console.log(`🔍 [Database] Executing SQL query: ${sqlString}`);
-      console.log(`🔍 [Database] Query params:`, params);
-      
-      // Note: This is a placeholder implementation
-      // In a real Frappe integration, you would use mysql2 or similar
-      // For now, return hardcoded mapping to fix the immediate issue
-      
-      if (sqlString.includes('tabEmployee') && params.includes('WF01IT')) {
-        console.log(`✅ [Database] Hardcoded mapping: WF01IT → linh.nguyenhai@wellspring.edu.vn`);
-        return [{ email: 'linh.nguyenhai@wellspring.edu.vn' }];
-      }
-      
-      // Add more hardcoded mappings as needed
-      const employeeMapping = {
-        'WF01IT': 'linh.nguyenhai@wellspring.edu.vn',
-        'WF02IT': 'user2@wellspring.edu.vn',
-        'WF03IT': 'user3@wellspring.edu.vn'
-      };
-      
-      const employeeCode = params[0];
-      if (employeeMapping[employeeCode]) {
-        console.log(`✅ [Database] Mapped: ${employeeCode} → ${employeeMapping[employeeCode]}`);
-        return [{ email: employeeMapping[employeeCode] }];
-      }
-      
-      console.log(`❌ [Database] No mapping found for: ${employeeCode}`);
-      return [];
-      
+      // Use MySQL connection to Frappe database
+      const mysqlConnection = require('./mysqlConnection');
+      return await mysqlConnection.query(sqlString, params);
     } catch (error) {
       console.error('SQL query error:', error);
       throw error;

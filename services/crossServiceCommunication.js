@@ -667,21 +667,35 @@ class CrossServiceCommunication {
     }
   }
 
-  // Handler cho attendance event - đơn giản
+  // Handler cho attendance event - route đến đúng handler
   async handleAttendanceRecorded(data) {
     try {
-      const { employeeCode, employeeName, timestamp, deviceName } = data;
+      const { employeeCode, employeeName, timestamp, deviceName, checkInTime, checkOutTime } = data;
       
-      console.log(`⏰ [Notification Service] Employee ${employeeName || employeeCode} recorded attendance`);
+      console.log(`⏰ [Notification Service] Processing attendance for: ${employeeCode} (${employeeName})`);
       
-      // Sử dụng function đơn giản mới
       const notificationController = require('../controllers/notificationController');
-      await notificationController.sendAttendanceNotification({
+      
+      // Try student attendance first
+      await notificationController.sendStudentAttendanceNotification({
         employeeCode,
         employeeName,
         timestamp,
-        deviceName
+        deviceName,
+        checkInTime,
+        checkOutTime
       });
+      
+      // Note: sendStudentAttendanceNotification sẽ check xem có phải student không
+      // Nếu không phải student, nó sẽ không làm gì
+      // Để gửi cho employee, có thể uncomment dòng dưới nếu cần:
+      // await notificationController.sendAttendanceNotification({
+      //   employeeCode,
+      //   employeeName,
+      //   timestamp,
+      //   deviceName
+      // });
+      
     } catch (error) {
       console.error('❌ [Notification Service] Error handling attendance recorded:', error);
     }

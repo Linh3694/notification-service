@@ -64,6 +64,10 @@ const connectDB = async () => {
     await mongoose.connect(mongoUri);
     console.log('✅ [Notification Service] MongoDB connected for notifications');
     
+    // Connect to MySQL Frappe database for student/guardian queries
+    const mysqlConnection = require('./config/mysqlConnection');
+    await mysqlConnection.connect();
+    
   } catch (error) {
     console.error('❌ [Notification Service] Database connection failed:', error.message);
     process.exit(1);
