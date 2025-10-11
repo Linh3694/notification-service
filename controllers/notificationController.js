@@ -268,7 +268,7 @@ async function getPushSubscriptionFromFrappe(userEmail) {
         const query = `
             SELECT subscription_json 
             FROM \`tabPush Subscription\` 
-            WHERE user = ? AND enabled = 1
+            WHERE user = ?
             LIMIT 1
         `;
         const result = await database.sqlQuery(query, [userEmail]);
