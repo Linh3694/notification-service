@@ -1315,7 +1315,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
             title,
             message,
             recipients,
-            notification_type: 'student_attendance',
+            notification_type: 'attendance',
             priority: 'high',
             channel: 'push',
             data: { 
@@ -1327,7 +1327,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
                 checkOutTime,
                 action,
                 isCheckIn,
-                type: 'student_attendance'
+                notificationType: 'student_attendance' // Để phân biệt student vs employee
             }
         };
 
