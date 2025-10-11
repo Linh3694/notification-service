@@ -1266,12 +1266,12 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
         const student = studentResult[0];
         console.log(`✅ [Notification Service] Found student: ${student.student_name} (${student.student_code})`);
         
-        // Step 2: Get guardians for this student
+        // Step 2: Get guardians for this student (bỏ điều kiện access = 1 để lấy tất cả guardians)
         const guardianQuery = `
-            SELECT DISTINCT g.guardian_id, g.guardian_name, g.email
+            SELECT DISTINCT g.guardian_id, g.guardian_name, g.email, fr.access
             FROM \`tabCRM Family Relationship\` fr
             INNER JOIN \`tabCRM Guardian\` g ON g.name = fr.guardian
-            WHERE fr.student = ? AND fr.access = 1
+            WHERE fr.student = ?
         `;
         const guardians = await database.sqlQuery(guardianQuery, [student.name]);
         
@@ -1279,6 +1279,9 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
             console.log(`⚠️ [Notification Service] No guardians found for student ${student.student_code}`);
             return;
         }
+        
+        console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s), access status:`, 
+            guardians.map(g => ({ name: g.guardian_name, access: g.access })));
         
         console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s) for student ${student.student_name}`);
         
