@@ -27,8 +27,8 @@ async function testStudentAttendance() {
       service: 'attendance-service',
       type: 'attendance_recorded',
       data: {
-        employeeCode: 'WS11510189',  // Mã học sinh Nguyễn Gia Bảo
-        employeeName: 'Nguyễn Gia Bảo',
+        employeeCode: 'WS12310116',  // Mã học sinh Nguyễn Gia Bảo
+        employeeName: 'Nguyễn Phúc Thế Bảo',
         timestamp: new Date().toISOString(),
         deviceId: 'TEST-DEVICE-001',
         deviceName: 'Cổng trường - Test',
