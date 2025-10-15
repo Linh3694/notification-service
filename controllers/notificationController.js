@@ -1420,7 +1420,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
              Math.abs(new Date(timestamp) - new Date(checkInTime)) < Math.abs(new Date(timestamp) - new Date(checkOutTime)));
         
         const action = isCheckIn ? 'vào trường' : 'ra khỏi trường';
-        const title = isCheckIn ? '✅ Con đã đến trường' : '👋 Con đã về';
+        const title = 'Điểm danh'; // Unified title for all attendance notifications
         
         const message = `${student.student_name} đã chấm công ${action} lúc ${time} tại ${deviceName || 'cổng trường'}`;
         
