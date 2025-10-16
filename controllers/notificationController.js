@@ -1419,10 +1419,10 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
             (checkInTime && checkOutTime && 
              Math.abs(new Date(timestamp) - new Date(checkInTime)) < Math.abs(new Date(timestamp) - new Date(checkOutTime)));
         
-        const action = isCheckIn ? 'vào trường' : 'ra khỏi trường';
+        // const action = isCheckIn ? 'vào trường' : 'ra khỏi trường';
         const title = 'Điểm danh'; // Unified title for all attendance notifications
         
-        const message = `${student.student_name} đã chấm công ${action} lúc ${time} tại ${deviceName || 'cổng trường'}`;
+        const message = `${student.student_name} đã điểm danh lúc ${time} tại ${deviceName || 'cổng trường'}`;
         
         // Step 5: Create guardian user emails (format: guardian_id@parent.wellspring.edu.vn)
         const recipients = guardians.map(g => `${g.guardian_id}@parent.wellspring.edu.vn`);
