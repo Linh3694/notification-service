@@ -1689,4 +1689,76 @@ exports.getNotificationAnalytics = async (req, res) => {
         console.error('Error getting notification analytics:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
+};
+
+/**
+ * Đánh dấu tất cả notifications đã đọc cho user (Frappe integration)
+ * Khác với markAllNotificationsAsRead, function này lấy userId từ params
+ */
+exports.markAllNotificationsAsReadForUser = async (req, res) => {
+    try {
+        const userId = req.params.userId;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        console.log(`📖 [Notification Controller] Marking all as read for user: ${userId}`);
+
+        const count = await NotificationRead.markAllAsReadForUser(userId);
+
+        res.json({
+            success: true,
+            message: `Marked ${count} notifications as read`,
+            count
+        });
+    } catch (error) {
+        console.error('Error marking all notifications as read:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+};
+
+/**
+ * Xóa notification cho user (soft delete - đánh dấu deleted trong NotificationRead)
+ */
+exports.deleteNotificationForUser = async (req, res) => {
+    try {
+        const { notificationId } = req.params;
+        const userId = req.body.userId;
+
+        if (!userId) {
+            return res.status(400).json({ error: 'User ID is required' });
+        }
+
+        console.log(`🗑️ [Notification Controller] Deleting notification ${notificationId} for user: ${userId}`);
+
+        // Find or create NotificationRead record
+        let readRecord = await NotificationRead.findOne({
+            notificationId,
+            userId
+        });
+
+        if (!readRecord) {
+            // Create new record if not exists
+            readRecord = new NotificationRead({
+                notificationId,
+                userId,
+                read: false,
+                deliveryStatus: 'delivered'
+            });
+        }
+
+        // Mark as deleted
+        readRecord.deleted = true;
+        readRecord.deletedAt = new Date();
+        await readRecord.save();
+
+        res.json({
+            success: true,
+            message: 'Notification deleted successfully'
+        });
+    } catch (error) {
+        console.error('Error deleting notification:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 }; 

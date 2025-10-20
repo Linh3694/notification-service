@@ -118,6 +118,15 @@ router.post("/mark-all-read", notificationController.markAllNotificationsAsRead)
 // Lấy số lượng unread notifications
 router.get("/user/:userId/unread-count", notificationController.getUnreadCount);
 
+// Mark notification as read (for Frappe integration)
+router.post("/:notificationId/read", notificationController.markNotificationAsRead);
+
+// Mark all notifications as read for user (for Frappe integration)
+router.post("/user/:userId/mark-all-read", notificationController.markAllNotificationsAsReadForUser);
+
+// Delete notification for user (soft delete)
+router.post("/:notificationId/delete", notificationController.deleteNotificationForUser);
+
 // Analytics: Lấy thống kê user
 router.get("/user/:userId/stats", notificationController.getUserNotificationStats);
 

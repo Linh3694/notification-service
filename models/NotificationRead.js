@@ -44,6 +44,16 @@ const notificationReadSchema = new mongoose.Schema({
     errorMessage: {
         type: String,
         default: null
+    },
+    // Soft delete
+    deleted: {
+        type: Boolean,
+        default: false,
+        index: true
+    },
+    deletedAt: {
+        type: Date,
+        default: null
     }
 }, {
     timestamps: true,

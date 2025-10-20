@@ -136,7 +136,22 @@ notificationSchema.statics.getUserNotifications = async function(userId, page = 
                         then: { $arrayElemAt: ['$readInfo.readAt', 0] },
                         else: null
                     }
+                },
+                deleted: {
+                    $cond: {
+                        if: { $gt: [{ $size: '$readInfo' }, 0] },
+                        then: { $arrayElemAt: ['$readInfo.deleted', 0] },
+                        else: false
+                    }
                 }
+            }
+        },
+        {
+            $match: {
+                $or: [
+                    { deleted: false },
+                    { deleted: { $exists: false } }
+                ]
             }
         },
         {
@@ -177,8 +192,7 @@ notificationSchema.statics.getUnreadCount = async function(userId) {
                             $expr: {
                                 $and: [
                                     { $eq: ['$notificationId', '$$notifId'] },
-                                    { $eq: ['$userId', userId] },
-                                    { $eq: ['$read', true] }
+                                    { $eq: ['$userId', userId] }
                                 ]
                             }
                         }
@@ -188,8 +202,30 @@ notificationSchema.statics.getUnreadCount = async function(userId) {
             }
         },
         {
+            $addFields: {
+                isRead: {
+                    $cond: {
+                        if: { $gt: [{ $size: '$readInfo' }, 0] },
+                        then: { $arrayElemAt: ['$readInfo.read', 0] },
+                        else: false
+                    }
+                },
+                isDeleted: {
+                    $cond: {
+                        if: { $gt: [{ $size: '$readInfo' }, 0] },
+                        then: { $arrayElemAt: ['$readInfo.deleted', 0] },
+                        else: false
+                    }
+                }
+            }
+        },
+        {
             $match: {
-                readInfo: { $size: 0 } // Chưa có record đã đọc
+                isRead: false,
+                $or: [
+                    { isDeleted: false },
+                    { isDeleted: { $exists: false } }
+                ]
             }
         },
         {
