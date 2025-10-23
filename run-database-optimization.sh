@@ -26,7 +26,7 @@ fi
 echo ""
 
 echo -e "${BLUE}📋 Step 2: Performance Testing${NC}"
-echo "Running performance benchmark tests..."
+echo "Running performance benchmark tests with Redis connection..."
 node scripts/test-database-performance.js
 
 if [ $? -eq 0 ]; then

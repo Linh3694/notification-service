@@ -8,6 +8,7 @@ const mongoose = require('mongoose');
 const Notification = require('../models/Notification');
 const NotificationRead = require('../models/NotificationRead');
 const cacheService = require('../services/cacheService');
+const redisClient = require('../config/redis');
 require('dotenv').config({ path: '../config.env' });
 
 async function performanceTest() {
@@ -16,15 +17,24 @@ async function performanceTest() {
   try {
     // Connect to MongoDB
     await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/notification_service');
-    console.log('✅ Connected to MongoDB\n');
+    console.log('✅ Connected to MongoDB');
+
+    // Connect to Redis
+    await redisClient.connect();
+    console.log('✅ Connected to Redis\n');
 
     // Test user ID (create test data if needed)
     const testUserId = 'perf-test-user';
 
     // Warm up cache
     console.log('🔥 Warming up cache...');
-    await cacheService.warmUserCache(testUserId);
-    console.log('✅ Cache warmed up\n');
+    try {
+      await cacheService.warmUserCache(testUserId);
+      console.log('✅ Cache warmed up\n');
+    } catch (cacheError) {
+      console.warn('⚠️ [Performance Test] Cache warm-up failed:', cacheError.message);
+      console.log('⏭️ Continuing without cache warm-up\n');
+    }
 
     // Performance tests
     const tests = [
@@ -129,8 +139,19 @@ async function performanceTest() {
     console.error('❌ Performance test failed:', error.message);
     console.error(error.stack);
   } finally {
-    await mongoose.disconnect();
-    console.log('\n🔌 Disconnected from MongoDB');
+    try {
+      await mongoose.disconnect();
+      console.log('🔌 Disconnected from MongoDB');
+    } catch (e) {
+      console.warn('⚠️ Failed to disconnect MongoDB:', e.message);
+    }
+
+    try {
+      await redisClient.client.quit();
+      console.log('🔌 Disconnected from Redis');
+    } catch (e) {
+      console.warn('⚠️ Failed to disconnect Redis:', e.message);
+    }
   }
 }
 

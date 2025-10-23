@@ -38,70 +38,175 @@ class CacheService {
 
   // User notifications cache
   async getUserNotifications(userId, page = 1, limit = 20) {
-    const key = this._getUserNotificationsKey(userId, page, limit);
-    return await redisClient.get(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return null;
+      }
+      const key = this._getUserNotificationsKey(userId, page, limit);
+      return await redisClient.get(key);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to get user notifications:', error.message);
+      return null;
+    }
   }
 
   async setUserNotifications(userId, page, limit, data) {
-    const key = this._getUserNotificationsKey(userId, page, limit);
-    await redisClient.set(key, data, this.defaultTTL.userNotifications);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getUserNotificationsKey(userId, page, limit);
+      const dataStr = JSON.stringify(data);
+      await redisClient.set(key, dataStr, this.defaultTTL.userNotifications);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to set user notifications:', error.message);
+    }
   }
 
   async invalidateUserNotifications(userId) {
-    // Invalidate all pages for this user
-    const pattern = `cache:notifications:user:${userId}:*`;
-    const keys = await redisClient.client.keys(pattern);
-    if (keys.length > 0) {
-      await redisClient.client.del(keys);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      // Invalidate all pages for this user
+      const pattern = `cache:notifications:user:${userId}:*`;
+      const keys = await redisClient.client.keys(pattern);
+      if (keys.length > 0) {
+        await redisClient.client.del(keys);
+      }
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to invalidate user notifications:', error.message);
     }
   }
 
   // Unread count cache
   async getUnreadCount(userId) {
-    const key = this._getUnreadCountKey(userId);
-    return await redisClient.get(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return null;
+      }
+      const key = this._getUnreadCountKey(userId);
+      const result = await redisClient.get(key);
+      return result ? parseInt(result) : null;
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to get unread count:', error.message);
+      return null;
+    }
   }
 
   async setUnreadCount(userId, count) {
-    const key = this._getUnreadCountKey(userId);
-    await redisClient.set(key, count, this.defaultTTL.unreadCount);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getUnreadCountKey(userId);
+      await redisClient.set(key, count.toString(), this.defaultTTL.unreadCount);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to set unread count:', error.message);
+    }
   }
 
   async invalidateUnreadCount(userId) {
-    const key = this._getUnreadCountKey(userId);
-    await redisClient.del(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getUnreadCountKey(userId);
+      await redisClient.del(key);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to invalidate unread count:', error.message);
+    }
   }
 
   // Notification detail cache
   async getNotificationDetail(notificationId) {
-    const key = this._getNotificationDetailKey(notificationId);
-    return await redisClient.get(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return null;
+      }
+      const key = this._getNotificationDetailKey(notificationId);
+      return await redisClient.get(key);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to get notification detail:', error.message);
+      return null;
+    }
   }
 
   async setNotificationDetail(notificationId, data) {
-    const key = this._getNotificationDetailKey(notificationId);
-    await redisClient.set(key, data, this.defaultTTL.notificationDetail);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getNotificationDetailKey(notificationId);
+      const dataStr = JSON.stringify(data);
+      await redisClient.set(key, dataStr, this.defaultTTL.notificationDetail);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to set notification detail:', error.message);
+    }
   }
 
   async invalidateNotificationDetail(notificationId) {
-    const key = this._getNotificationDetailKey(notificationId);
-    await redisClient.del(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getNotificationDetailKey(notificationId);
+      await redisClient.del(key);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to invalidate notification detail:', error.message);
+    }
   }
 
   // Analytics cache
   async getAnalytics(type, params = {}) {
-    const key = this._getAnalyticsKey(type, params);
-    return await redisClient.get(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return null;
+      }
+      const key = this._getAnalyticsKey(type, params);
+      const result = await redisClient.get(key);
+      return result ? JSON.parse(result) : null;
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to get analytics:', error.message);
+      return null;
+    }
   }
 
   async setAnalytics(type, params, data) {
-    const key = this._getAnalyticsKey(type, params);
-    await redisClient.set(key, data, this.defaultTTL.analytics);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getAnalyticsKey(type, params);
+      const dataStr = JSON.stringify(data);
+      await redisClient.set(key, dataStr, this.defaultTTL.analytics);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to set analytics:', error.message);
+    }
   }
 
   async invalidateAnalytics(type, params = {}) {
-    const key = this._getAnalyticsKey(type, params);
-    await redisClient.del(key);
+    try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available');
+        return;
+      }
+      const key = this._getAnalyticsKey(type, params);
+      await redisClient.del(key);
+    } catch (error) {
+      console.warn('⚠️ [CacheService] Failed to invalidate analytics:', error.message);
+    }
   }
 
   // Bulk invalidation methods
@@ -122,6 +227,11 @@ class CacheService {
   // Cache warming for frequently accessed data
   async warmUserCache(userId) {
     try {
+      if (!redisClient.client) {
+        console.warn('⚠️ [CacheService] Redis client not available for cache warming');
+        return;
+      }
+
       const Notification = require('../models/Notification');
 
       // Warm unread count

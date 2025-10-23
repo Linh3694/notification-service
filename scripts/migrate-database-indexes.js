@@ -150,13 +150,24 @@ async function migrateDatabaseIndexes() {
             continue;
           }
 
-          await collection.createIndex(indexDef.key, {
+          // Build index options - only include defined properties
+          const indexOptions = {
             name: indexDef.name,
-            unique: indexDef.unique || false,
-            partialFilterExpression: indexDef.partialFilterExpression,
-            expireAfterSeconds: indexDef.expireAfterSeconds,
             background: indexDef.background
-          });
+          };
+
+          // Add optional properties only if they exist
+          if (indexDef.unique !== undefined) {
+            indexOptions.unique = indexDef.unique;
+          }
+          if (indexDef.partialFilterExpression) {
+            indexOptions.partialFilterExpression = indexDef.partialFilterExpression;
+          }
+          if (indexDef.expireAfterSeconds) {
+            indexOptions.expireAfterSeconds = indexDef.expireAfterSeconds;
+          }
+
+          await collection.createIndex(indexDef.key, indexOptions);
 
           console.log(`  ✅ Created index: ${indexDef.name}`);
           results[collectionName].created.push(indexDef.name);
