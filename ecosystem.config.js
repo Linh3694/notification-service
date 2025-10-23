@@ -2,19 +2,16 @@ module.exports = {
   apps: [{
     name: 'notification-service',
     script: 'app.js',
-    instances: 2,
+    instances: 1, // 🔧 FIX: Scale to 1 instance to prevent duplicate notifications
     instance_var: 'INSTANCE_ID',
     autorestart: true,
     watch: false,
-    max_memory_restart: '1G',
+    max_memory_restart: '1.5G', // 💡 INCREASED: 1.5GB for safety margin
     env: {
       NODE_ENV: 'development',
       PORT: 5001
     },
-    env_production: {
-      NODE_ENV: 'production',
-      PORT: 5001
-    },
+    // Enhanced logging configuration
     error_file: './logs/err.log',
     out_file: './logs/out.log',
     log_file: './logs/combined.log',
@@ -26,6 +23,19 @@ module.exports = {
     restart_delay: 4000,
     kill_timeout: 5000,
     listen_timeout: 8000,
-    shutdown_with_message: true
+    shutdown_with_message: true,
+
+    // Additional PM2 optimizations
+    node_args: '--max-old-space-size=1024 --optimize-for-size', // Limit memory + optimize
+    env_production: {
+      NODE_ENV: 'production',
+      PORT: 5001,
+      // Disable debug logging in production
+      DEBUG: false,
+      // Enable clustering optimizations
+      UV_THREADPOOL_SIZE: 4,
+      // Production memory settings
+      NODE_OPTIONS: '--max-old-space-size=1024'
+    }
   }]
 }; 
