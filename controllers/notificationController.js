@@ -1028,7 +1028,13 @@ exports.markAsRead = async (req, res) => {
         await readRecord.markAsRead();
 
         // Invalidate user cache
-        await cacheService.invalidateUserCache(userId);
+        console.log(`🗑️ [markAsRead] Invalidating cache for user: ${userId}`);
+        try {
+            await cacheService.invalidateUserCache(userId);
+            console.log(`✅ [markAsRead] Cache invalidated successfully for user: ${userId}`);
+        } catch (cacheError) {
+            console.warn(`⚠️ [markAsRead] Cache invalidation failed:`, cacheError.message);
+        }
 
         console.log(`✅ [markAsRead] Marked notification ${notificationId} as read for user ${userId}`);
 
