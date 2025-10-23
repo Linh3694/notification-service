@@ -286,19 +286,68 @@ cron.schedule('*/10 * * * * *', processNotificationQueue);
 cron.schedule('0 2 * * *', async () => {
   try {
     console.log('🧹 [Notification Service] Cleaning up old notifications...');
-    
+
     // Delete notifications older than 30 days
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
+
     await database.query(
       'DELETE FROM `tabNotification Log` WHERE creation < ?',
       [thirtyDaysAgo.toISOString()]
     );
-    
+
     console.log('✅ [Notification Service] Old notifications cleaned up');
   } catch (error) {
     console.error('❌ [Notification Service] Error cleaning up notifications:', error);
+  }
+});
+
+// Cleanup expired push tokens every day at 3 AM
+cron.schedule('0 3 * * *', async () => {
+  try {
+    console.log('🧹 [Notification Service] Cleaning up expired push tokens...');
+    const redisClient = require('./config/redis');
+    const cleanedCount = await redisClient.cleanupExpiredTokens();
+    console.log(`✅ [Notification Service] Push token cleanup completed: ${cleanedCount} tokens removed`);
+  } catch (error) {
+    console.error('❌ [Notification Service] Error cleaning up push tokens:', error);
+  }
+});
+
+// Health check for push tokens every week (Sunday at 4 AM)
+cron.schedule('0 4 * * 0', async () => {
+  try {
+    console.log('🔍 [Notification Service] Starting push token health check...');
+    const redisClient = require('./config/redis');
+
+    // Get some sample users and check their tokens
+    const keys = await redisClient.client.keys('push_tokens:*');
+    let totalTokens = 0;
+    let activeTokens = 0;
+
+    for (const key of keys.slice(0, 10)) { // Check first 10 users
+      const devices = await redisClient.client.hGetAll(key);
+      totalTokens += Object.keys(devices).length;
+
+      for (const [deviceId, tokenData] of Object.entries(devices)) {
+        try {
+          if (!tokenData.startsWith('ExponentPushToken[')) {
+            const parsedData = JSON.parse(tokenData);
+            if (parsedData.isActive !== false) {
+              activeTokens++;
+            }
+          } else {
+            activeTokens++; // Legacy tokens assumed active
+          }
+        } catch (error) {
+          console.warn(`⚠️ [Notification Service] Invalid token data for device ${deviceId}`);
+        }
+      }
+    }
+
+    console.log(`📊 [Notification Service] Token health: ${activeTokens}/${totalTokens} active tokens`);
+  } catch (error) {
+    console.error('❌ [Notification Service] Error in token health check:', error);
   }
 });
 

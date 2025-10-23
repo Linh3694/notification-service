@@ -294,59 +294,252 @@ class RedisClient {
     await this.del(key);
   }
 
-  // Push token management
-  async storePushToken(userId, token, platform = 'expo') {
-    const key = `push_tokens:${this._safeUserIdToString(userId, 'storePushToken')}`;
-    await this.client.hSet(key, platform, token);
+  // Push token management - Enhanced for PWA & device tracking
+  async storePushToken(userId, token, platform = 'web', deviceInfo = {}) {
+    const userIdStr = this._safeUserIdToString(userId, 'storePushToken');
+    const key = `push_tokens:${userIdStr}`;
+
+    // Generate device ID if not provided
+    const deviceId = deviceInfo.deviceId || this._generateDeviceId();
+
+    // Create structured token data
+    const tokenData = {
+      token: token,
+      platform: platform,
+      deviceId: deviceId,
+      deviceName: deviceInfo.deviceName || `Device ${deviceId.slice(-4)}`,
+      userAgent: deviceInfo.userAgent || '',
+      browser: deviceInfo.browser || 'Unknown',
+      os: deviceInfo.os || 'Unknown',
+      osVersion: deviceInfo.osVersion || '',
+      appVersion: deviceInfo.appVersion || '1.0.0',
+      language: deviceInfo.language || 'en',
+      timezone: deviceInfo.timezone || 'UTC',
+      isPWA: deviceInfo.isPWA || false,
+      isActive: true,
+      created: new Date().toISOString(),
+      lastActive: new Date().toISOString(),
+      pushSuccessCount: 0,
+      pushFailureCount: 0,
+      // For web push subscriptions
+      subscription: deviceInfo.subscription || null
+    };
+
+    console.log(`📱 [storePushToken] Storing token for user ${userIdStr}, device ${deviceId}, platform ${platform}`);
+    await this.client.hSet(key, deviceId, JSON.stringify(tokenData));
+
+    // Set expiration for the entire user key (30 days)
+    await this.client.expire(key, 30 * 24 * 60 * 60);
+
+    return deviceId;
   }
 
   async getPushTokens(userId) {
     const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
     const rawTokens = await this.client.hGetAll(key);
-    
+
     if (!rawTokens || Object.keys(rawTokens).length === 0) {
       return null;
     }
-    
-    // Parse tokens from both raw and JSON format
+
+    // Parse structured token data
     const parsedTokens = {};
     for (const [deviceId, tokenData] of Object.entries(rawTokens)) {
       try {
-        let token;
-        
-        // Handle both raw token and JSON format
+        let token, deviceInfo;
+
         if (tokenData.startsWith('ExponentPushToken[')) {
-          // Raw token format (legacy support)
+          // Legacy raw token format (backward compatibility)
           token = tokenData;
-          console.log(`📱 [getPushTokens] Device ${deviceId} using raw token format for user ${userId}`);
+          deviceInfo = {
+            platform: 'expo',
+            isActive: true,
+            deviceId: deviceId,
+            deviceName: `Legacy Device ${deviceId.slice(-4)}`
+          };
+          console.log(`📱 [getPushTokens] Device ${deviceId} using legacy raw token format for user ${userId}`);
         } else {
-          // JSON format
+          // New structured JSON format
           const parsedData = JSON.parse(tokenData);
-          token = parsedData.token;
-          console.log(`📱 [getPushTokens] Device ${deviceId} using JSON token format for user ${userId}`);
+          token = parsedData.subscription ? JSON.stringify(parsedData.subscription) : parsedData.token;
+          deviceInfo = parsedData;
+          console.log(`📱 [getPushTokens] Device ${deviceId} using structured format for user ${userId} (${parsedData.platform})`);
         }
-        
-        parsedTokens[deviceId] = token;
-        
+
+        // Only include active tokens
+        if (deviceInfo.isActive !== false) {
+          parsedTokens[deviceId] = {
+            token: token,
+            deviceInfo: deviceInfo
+          };
+        }
+
       } catch (parseError) {
         console.warn(`⚠️ [getPushTokens] Failed to parse token data for device ${deviceId} (user: ${userId}):`, parseError.message);
         console.warn(`📄 Raw token data: ${tokenData.substring(0, 50)}...`);
         continue;
       }
     }
-    
+
     if (Object.keys(parsedTokens).length === 0) {
-      console.log(`📱 [getPushTokens] No valid push tokens found for user: ${userId}`);
+      console.log(`📱 [getPushTokens] No valid active push tokens found for user: ${userId}`);
       return null;
     }
-    
-    console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid push token(s) for user: ${userId}`);
+
+    console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid active push token(s) for user: ${userId}`);
     return parsedTokens;
   }
 
+  // Enhanced device management methods
   async removePushToken(userId, platform = 'expo') {
     const key = `push_tokens:${this._safeUserIdToString(userId, 'removePushToken')}`;
     await this.client.hDel(key, platform);
+  }
+
+  async removeDeviceToken(userId, deviceId) {
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'removeDeviceToken')}`;
+    const result = await this.client.hDel(key, deviceId);
+    console.log(`🗑️ [removeDeviceToken] Removed device ${deviceId} for user ${userId}:`, result);
+    return result > 0;
+  }
+
+  async updateDeviceActivity(userId, deviceId) {
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'updateDeviceActivity')}`;
+    const deviceData = await this.client.hGet(key, deviceId);
+
+    if (deviceData) {
+      try {
+        const parsedData = JSON.parse(deviceData);
+        parsedData.lastActive = new Date().toISOString();
+        await this.client.hSet(key, deviceId, JSON.stringify(parsedData));
+        console.log(`📱 [updateDeviceActivity] Updated activity for device ${deviceId}, user ${userId}`);
+      } catch (error) {
+        console.warn(`⚠️ [updateDeviceActivity] Failed to parse device data for ${deviceId}:`, error.message);
+      }
+    }
+  }
+
+  async deactivateDevice(userId, deviceId) {
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'deactivateDevice')}`;
+    const deviceData = await this.client.hGet(key, deviceId);
+
+    if (deviceData) {
+      try {
+        const parsedData = JSON.parse(deviceData);
+        parsedData.isActive = false;
+        parsedData.deactivatedAt = new Date().toISOString();
+        await this.client.hSet(key, deviceId, JSON.stringify(parsedData));
+        console.log(`🚫 [deactivateDevice] Deactivated device ${deviceId} for user ${userId}`);
+        return true;
+      } catch (error) {
+        console.warn(`⚠️ [deactivateDevice] Failed to parse device data for ${deviceId}:`, error.message);
+      }
+    }
+    return false;
+  }
+
+  async getUserDevices(userId) {
+    const key = `push_tokens:${this._safeUserIdToString(userId, 'getUserDevices')}`;
+    const rawTokens = await this.client.hGetAll(key);
+
+    if (!rawTokens || Object.keys(rawTokens).length === 0) {
+      return [];
+    }
+
+    const devices = [];
+    for (const [deviceId, tokenData] of Object.entries(rawTokens)) {
+      try {
+        if (tokenData.startsWith('ExponentPushToken[')) {
+          // Legacy format
+          devices.push({
+            deviceId: deviceId,
+            platform: 'expo',
+            deviceName: `Legacy Device ${deviceId.slice(-4)}`,
+            isActive: true,
+            created: null,
+            lastActive: null
+          });
+        } else {
+          const parsedData = JSON.parse(tokenData);
+          devices.push({
+            deviceId: deviceId,
+            platform: parsedData.platform,
+            deviceName: parsedData.deviceName,
+            browser: parsedData.browser,
+            os: parsedData.os,
+            isPWA: parsedData.isPWA,
+            isActive: parsedData.isActive !== false,
+            created: parsedData.created,
+            lastActive: parsedData.lastActive
+          });
+        }
+      } catch (error) {
+        console.warn(`⚠️ [getUserDevices] Failed to parse device ${deviceId}:`, error.message);
+      }
+    }
+
+    return devices.sort((a, b) => new Date(b.lastActive || 0) - new Date(a.lastActive || 0));
+  }
+
+  async cleanupExpiredTokens() {
+    console.log('🧹 [cleanupExpiredTokens] Starting cleanup of expired push tokens...');
+
+    let cleanedCount = 0;
+    const keys = await this.client.keys('push_tokens:*');
+
+    for (const key of keys) {
+      const userId = key.replace('push_tokens:', '');
+      const devices = await this.client.hGetAll(key);
+
+      for (const [deviceId, tokenData] of Object.entries(devices)) {
+        try {
+          let shouldRemove = false;
+          let lastActive;
+
+          if (tokenData.startsWith('ExponentPushToken[')) {
+            // Legacy tokens - remove if older than 90 days
+            const keyTTL = await this.client.ttl(key);
+            if (keyTTL === -1) { // No TTL set
+              shouldRemove = true;
+            }
+          } else {
+            const parsedData = JSON.parse(tokenData);
+            lastActive = new Date(parsedData.lastActive || parsedData.created);
+            const daysSinceActive = (Date.now() - lastActive.getTime()) / (1000 * 60 * 60 * 24);
+
+            // Remove inactive devices after 30 days
+            if (!parsedData.isActive || daysSinceActive > 30) {
+              shouldRemove = true;
+            }
+          }
+
+          if (shouldRemove) {
+            await this.client.hDel(key, deviceId);
+            cleanedCount++;
+            console.log(`🗑️ [cleanupExpiredTokens] Removed expired device ${deviceId} for user ${userId}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ [cleanupExpiredTokens] Error processing device ${deviceId}:`, error.message);
+        }
+      }
+
+      // Remove empty user keys
+      const remainingDevices = await this.client.hLen(key);
+      if (remainingDevices === 0) {
+        await this.client.del(key);
+        console.log(`🗑️ [cleanupExpiredTokens] Removed empty key for user ${userId}`);
+      }
+    }
+
+    console.log(`✅ [cleanupExpiredTokens] Cleanup completed. Removed ${cleanedCount} expired tokens.`);
+    return cleanedCount;
+  }
+
+  // Helper method to generate unique device ID
+  _generateDeviceId() {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substr(2, 5);
+    return `device_${timestamp}_${random}`;
   }
 
   // Notification queue

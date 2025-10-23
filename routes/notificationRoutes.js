@@ -4,11 +4,17 @@ const notificationController = require("../controllers/notificationController");
 const { authenticate } = require("../middleware/authMiddleware");
 const crossServiceCommunication = require("../services/crossServiceCommunication");
 
-// Đăng ký thiết bị để nhận thông báo
+// Device management routes - Enhanced for PWA support
 router.post("/register-device", authenticate, notificationController.registerDevice);
-
-// Hủy đăng ký thiết bị
 router.post("/unregister-device", authenticate, notificationController.unregisterDevice);
+
+// New device management endpoints
+router.get("/devices", authenticate, notificationController.getUserDevices);
+router.put("/devices/:deviceId", authenticate, notificationController.updateDevice);
+router.delete("/devices/:deviceId", authenticate, notificationController.unregisterDeviceById);
+
+// Test endpoint for development
+router.post("/test-device-registration", notificationController.testDeviceRegistration);
 
 // Lấy danh sách thông báo
 router.get("/", authenticate, notificationController.getNotifications);

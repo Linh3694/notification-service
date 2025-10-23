@@ -60,10 +60,35 @@ const notificationReadSchema = new mongoose.Schema({
     collection: 'notification_reads'
 });
 
-// Compound indexes
-notificationReadSchema.index({ notificationId: 1, userId: 1 }, { unique: true });
-notificationReadSchema.index({ userId: 1, read: 1, createdAt: -1 });
-notificationReadSchema.index({ deliveryStatus: 1, createdAt: -1 });
+// Optimized compound indexes cho performance
+notificationReadSchema.index({ notificationId: 1, userId: 1 }, { unique: true }); // Primary lookup
+notificationReadSchema.index({ userId: 1, createdAt: -1 }); // User notification history
+notificationReadSchema.index({ userId: 1, read: 1, createdAt: -1 }); // Unread count queries
+notificationReadSchema.index({ deliveryStatus: 1, createdAt: -1 }); // Delivery analytics
+notificationReadSchema.index({ platform: 1, createdAt: -1 }); // Platform analytics
+notificationReadSchema.index({ deleted: 1, userId: 1, createdAt: -1 }); // Soft delete queries
+
+// Partial indexes cho active records
+notificationReadSchema.index(
+  { userId: 1, read: 1, createdAt: -1 },
+  {
+    partialFilterExpression: {
+      deleted: { $ne: true } // Chỉ index non-deleted records
+    }
+  }
+);
+
+// TTL index cho auto cleanup old read records (180 days)
+notificationReadSchema.index(
+  { createdAt: 1 },
+  {
+    expireAfterSeconds: 180 * 24 * 60 * 60,
+    partialFilterExpression: {
+      read: true, // Chỉ cleanup records đã đọc
+      deleted: { $ne: true }
+    }
+  }
+);
 
 // Instance methods
 notificationReadSchema.methods.markAsRead = async function() {

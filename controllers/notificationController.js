@@ -1,5 +1,6 @@
 const database = require('../config/database');
 const redisClient = require('../config/redis');
+const cacheService = require('../services/cacheService');
 const { Expo } = require('expo-server-sdk');
 const Notification = require('../models/Notification');
 const NotificationRead = require('../models/NotificationRead');
@@ -670,172 +671,407 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
 };
 
 /**
- * Đăng ký thiết bị để nhận thông báo
+ * Đăng ký thiết bị để nhận thông báo - Enhanced for PWA support
  */
 exports.registerDevice = async (req, res) => {
     try {
-        const { deviceToken } = req.body;
+        const {
+            deviceToken,
+            deviceId,
+            deviceName,
+            platform = 'web',
+            browser,
+            os,
+            osVersion,
+            appVersion,
+            language,
+            timezone,
+            userAgent,
+            isPWA = false,
+            subscription // For web push subscriptions
+        } = req.body;
+
         const userId = req.user.name || req.user._id;
 
-        if (!deviceToken) {
-            return res.status(400).json({
-                success: false,
-                message: 'Thiếu token thiết bị'
-            });
+        // Validation based on platform
+        if (platform === 'web') {
+            // Web push: subscription object required
+            if (!subscription) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Web push subscription is required for web platform'
+                });
+            }
+        } else {
+            // Mobile: device token required
+            if (!deviceToken) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Device token is required'
+                });
+            }
+
+            // Validate Expo token format
+            if (platform === 'expo' && !Expo.isExpoPushToken(deviceToken)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Invalid Expo push token format'
+                });
+            }
         }
 
-        // Kiểm tra token có hợp lệ không
-        if (!Expo.isExpoPushToken(deviceToken)) {
-            return res.status(400).json({
-                success: false,
-                message: 'Token không hợp lệ'
-            });
-        }
+        // Prepare device info
+        const deviceInfo = {
+            deviceId: deviceId,
+            deviceName: deviceName,
+            platform: platform,
+            browser: browser,
+            os: os,
+            osVersion: osVersion,
+            appVersion: appVersion,
+            language: language || 'en',
+            timezone: timezone || 'UTC',
+            userAgent: userAgent,
+            isPWA: isPWA,
+            subscription: subscription // For web push
+        };
 
-        // Lưu token vào Redis
-        await redisClient.storePushToken(userId, deviceToken);
+        // Use subscription for web push, deviceToken for mobile
+        const token = platform === 'web' ? JSON.stringify(subscription) : deviceToken;
+
+        // Store token with device info
+        const assignedDeviceId = await redisClient.storePushToken(userId, token, platform, deviceInfo);
+
+        console.log(`✅ [registerDevice] Registered device ${assignedDeviceId} for user ${userId} (${platform})`);
 
         return res.status(200).json({
             success: true,
-            message: 'Đăng ký thiết bị thành công'
+            message: 'Đăng ký thiết bị thành công',
+            data: {
+                deviceId: assignedDeviceId,
+                platform: platform,
+                deviceName: deviceInfo.deviceName
+            }
         });
     } catch (error) {
-        console.error('Lỗi khi đăng ký thiết bị:', error);
+        console.error('❌ [registerDevice] Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'Đã xảy ra lỗi khi đăng ký thiết bị'
+            message: 'Đã xảy ra lỗi khi đăng ký thiết bị',
+            error: error.message
         });
     }
 };
 
 /**
- * Hủy đăng ký thiết bị
+ * Hủy đăng ký thiết bị - Legacy method (removes all tokens)
  */
 exports.unregisterDevice = async (req, res) => {
     try {
         const userId = req.user.name || req.user._id;
 
-        // Xóa token khỏi Redis
-        await redisClient.removePushToken(userId);
+        // For backward compatibility, remove all tokens for user
+        // This is less precise but maintains compatibility
+        const devices = await redisClient.getUserDevices(userId);
+        for (const device of devices) {
+            await redisClient.removeDeviceToken(userId, device.deviceId);
+        }
 
         return res.status(200).json({
             success: true,
             message: 'Hủy đăng ký thiết bị thành công'
         });
     } catch (error) {
-        console.error('Lỗi khi hủy đăng ký thiết bị:', error);
+        console.error('❌ [unregisterDevice] Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'Đã xảy ra lỗi khi hủy đăng ký thiết bị'
+            message: 'Đã xảy ra lỗi khi hủy đăng ký thiết bị',
+            error: error.message
         });
     }
 };
 
 /**
- * Lấy danh sách thông báo của người dùng
+ * Lấy danh sách thiết bị của user
+ */
+exports.getUserDevices = async (req, res) => {
+    try {
+        const userId = req.user.name || req.user._id;
+        const devices = await redisClient.getUserDevices(userId);
+
+        return res.status(200).json({
+            success: true,
+            data: devices,
+            total: devices.length
+        });
+    } catch (error) {
+        console.error('❌ [getUserDevices] Error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Đã xảy ra lỗi khi lấy danh sách thiết bị',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Cập nhật thông tin thiết bị
+ */
+exports.updateDevice = async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const updates = req.body;
+        const userId = req.user.name || req.user._id;
+
+        // Validate allowed updates
+        const allowedUpdates = ['deviceName', 'appVersion', 'language', 'timezone'];
+        const filteredUpdates = {};
+
+        for (const [key, value] of Object.entries(updates)) {
+            if (allowedUpdates.includes(key)) {
+                filteredUpdates[key] = value;
+            }
+        }
+
+        if (Object.keys(filteredUpdates).length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Không có trường nào được phép cập nhật'
+            });
+        }
+
+        // Update device info in Redis
+        const key = `push_tokens:${userId}`;
+        const deviceData = await redisClient.client.hGet(key, deviceId);
+
+        if (!deviceData) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thiết bị'
+            });
+        }
+
+        const parsedData = JSON.parse(deviceData);
+        Object.assign(parsedData, filteredUpdates);
+        parsedData.lastActive = new Date().toISOString();
+
+        await redisClient.client.hSet(key, deviceId, JSON.stringify(parsedData));
+
+        console.log(`✅ [updateDevice] Updated device ${deviceId} for user ${userId}`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Cập nhật thiết bị thành công',
+            data: {
+                deviceId: deviceId,
+                updates: filteredUpdates
+            }
+        });
+    } catch (error) {
+        console.error('❌ [updateDevice] Error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Đã xảy ra lỗi khi cập nhật thiết bị',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Hủy đăng ký thiết bị cụ thể theo deviceId
+ */
+exports.unregisterDeviceById = async (req, res) => {
+    try {
+        const { deviceId } = req.params;
+        const userId = req.user.name || req.user._id;
+
+        const success = await redisClient.removeDeviceToken(userId, deviceId);
+
+        if (!success) {
+            return res.status(404).json({
+                success: false,
+                message: 'Không tìm thấy thiết bị để xóa'
+            });
+        }
+
+        console.log(`✅ [unregisterDeviceById] Removed device ${deviceId} for user ${userId}`);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Hủy đăng ký thiết bị thành công',
+            data: { deviceId }
+        });
+    } catch (error) {
+        console.error('❌ [unregisterDeviceById] Error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Đã xảy ra lỗi khi hủy đăng ký thiết bị',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Test device registration (for development)
+ */
+exports.testDeviceRegistration = async (req, res) => {
+    try {
+        const testData = {
+            platform: 'web',
+            deviceName: 'Test Browser',
+            browser: 'Chrome',
+            os: 'macOS',
+            osVersion: '14.0',
+            appVersion: '1.0.0',
+            language: 'en',
+            timezone: 'UTC',
+            isPWA: true,
+            subscription: {
+                endpoint: 'https://test-endpoint.com',
+                keys: {
+                    p256dh: 'test-p256dh-key',
+                    auth: 'test-auth-key'
+                }
+            }
+        };
+
+        const userId = req.user?.name || req.user?._id || 'test-user';
+        const deviceId = await redisClient.storePushToken(userId, JSON.stringify(testData.subscription), 'web', testData);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Test device registration successful',
+            data: {
+                userId,
+                deviceId,
+                deviceInfo: testData
+            }
+        });
+    } catch (error) {
+        console.error('❌ [testDeviceRegistration] Error:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Test device registration failed',
+            error: error.message
+        });
+    }
+};
+
+/**
+ * Lấy danh sách thông báo của người dùng - Cached & Optimized
  */
 exports.getNotifications = async (req, res) => {
     try {
         const userId = req.user.name || req.user._id;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 20;
-        const skip = (page - 1) * limit;
 
-        // Lấy danh sách thông báo từ database
-        const notifications = await database.getAll(
-            'Notification Log', 
-            { for_user: userId },
-            ['name', 'subject', 'email_content', 'type', 'read', 'creation'],
-            'creation DESC',
-            limit,
-            skip
-        );
+        // Try cache first
+        const cached = await cacheService.getUserNotifications(userId, page, limit);
+        if (cached) {
+            console.log(`✅ [getNotifications] Cache hit for user ${userId}, page ${page}`);
+            return res.status(200).json(JSON.parse(cached));
+        }
 
-        // Đếm tổng số thông báo và số thông báo chưa đọc
-        const total = await database.getAll('Notification Log', { for_user: userId });
-        const unreadCount = await database.getAll('Notification Log', { for_user: userId, read: 0 });
+        // Cache miss - query database
+        console.log(`📡 [getNotifications] Cache miss for user ${userId}, page ${page}`);
+        const result = await Notification.getUserNotifications(userId, page, limit);
 
-        return res.status(200).json({
+        // Also get unread count
+        const unreadCount = await Notification.getUnreadCount(userId);
+
+        const response = {
             success: true,
-            notifications,
+            notifications: result.notifications,
             pagination: {
-                total: total.length,
-                unreadCount: unreadCount.length,
-                page,
-                limit,
-                pages: Math.ceil(total.length / limit)
+                ...result.pagination,
+                unreadCount
             }
-        });
+        };
+
+        // Cache the result
+        await cacheService.setUserNotifications(userId, page, limit, response);
+
+        return res.status(200).json(response);
     } catch (error) {
-        console.error('Lỗi khi lấy danh sách thông báo:', error);
+        console.error('❌ [getNotifications] Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'Đã xảy ra lỗi khi lấy danh sách thông báo'
+            message: 'Đã xảy ra lỗi khi lấy danh sách thông báo',
+            error: error.message
         });
     }
 };
 
 /**
- * Đánh dấu thông báo đã đọc
+ * Đánh dấu thông báo đã đọc - Cache-aware
  */
 exports.markAsRead = async (req, res) => {
     try {
         const { notificationId } = req.params;
         const userId = req.user.name || req.user._id;
 
-        const notification = await database.get('Notification Log', notificationId);
-        if (!notification || notification.for_user !== userId) {
+        // Find and update the notification read record
+        const readRecord = await NotificationRead.findOne({
+            notificationId: notificationId,
+            userId: userId
+        });
+
+        if (!readRecord) {
             return res.status(404).json({
                 success: false,
                 message: 'Không tìm thấy thông báo'
             });
         }
 
-        await database.update('Notification Log', notificationId, {
-            read: 1,
-            modified: new Date().toISOString()
-        });
+        // Mark as read
+        await readRecord.markAsRead();
 
-        // Invalidate cache
-        await redisClient.invalidateUserNotificationsCache(userId);
+        // Invalidate user cache
+        await cacheService.invalidateUserCache(userId);
+
+        console.log(`✅ [markAsRead] Marked notification ${notificationId} as read for user ${userId}`);
 
         return res.status(200).json({
             success: true,
             message: 'Đã đánh dấu thông báo là đã đọc'
         });
     } catch (error) {
-        console.error('Lỗi khi đánh dấu thông báo đã đọc:', error);
+        console.error('❌ [markAsRead] Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'Đã xảy ra lỗi khi đánh dấu thông báo'
+            message: 'Đã xảy ra lỗi khi đánh dấu thông báo',
+            error: error.message
         });
     }
 };
 
 /**
- * Đánh dấu tất cả thông báo đã đọc
+ * Đánh dấu tất cả thông báo đã đọc - Cache-aware
  */
 exports.markAllAsRead = async (req, res) => {
     try {
         const userId = req.user.name || req.user._id;
 
-        await database.query(
-            'UPDATE `tabNotification Log` SET `read` = 1, `modified` = ? WHERE `for_user` = ?',
-            [new Date().toISOString(), userId]
-        );
+        // Use optimized method
+        const count = await NotificationRead.markAllAsReadForUser(userId);
 
-        // Invalidate cache
-        await redisClient.invalidateUserNotificationsCache(userId);
+        // Invalidate user cache
+        await cacheService.invalidateUserCache(userId);
+
+        console.log(`✅ [markAllAsRead] Marked ${count} notifications as read for user ${userId}`);
 
         return res.status(200).json({
             success: true,
-            message: 'Đã đánh dấu tất cả thông báo là đã đọc'
+            message: 'Đã đánh dấu tất cả thông báo là đã đọc',
+            count: count
         });
     } catch (error) {
-        console.error('Lỗi khi đánh dấu tất cả thông báo đã đọc:', error);
+        console.error('❌ [markAllAsRead] Error:', error);
         return res.status(500).json({
             success: false,
-            message: 'Đã xảy ra lỗi khi đánh dấu tất cả thông báo'
+            message: 'Đã xảy ra lỗi khi đánh dấu tất cả thông báo',
+            error: error.message
         });
     }
 };
