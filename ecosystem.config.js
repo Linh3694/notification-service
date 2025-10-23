@@ -6,7 +6,7 @@ module.exports = {
     instance_var: 'INSTANCE_ID',
     autorestart: true,
     watch: false,
-    max_memory_restart: '1.5G', // 💡 INCREASED: 1.5GB for safety margin
+    max_memory_restart: '1536M', // 💡 INCREASED: 1.5GB (1536MB) for safety margin
     env: {
       NODE_ENV: 'development',
       PORT: 5001
