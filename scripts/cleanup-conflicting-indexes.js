@@ -40,7 +40,7 @@ async function cleanupConflictingIndexes() {
           'platform_1_createdAt_-1',   // Platform analytics
           'deleted_1_userId_1_createdAt_-1', // Soft delete queries
           'userId_read_active_partial', // Active records partial
-          'createdAt_read_ttl',        // TTL from schema
+          // 'createdAt_read_ttl',        // TTL from schema (will be added later)
           '_id_'                       // Default MongoDB index
         ]
       };
