@@ -3,7 +3,7 @@
  * Chạy: node test-push-token-management.js
  */
 
-const redis = require('./config/redis');
+const redis = require('../config/redis');
 require('dotenv').config({ path: './config.env' });
 
 async function testPushTokenManagement() {
