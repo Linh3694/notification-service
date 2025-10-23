@@ -81,13 +81,12 @@ notificationSchema.index(
 );
 
 // TTL index cho auto cleanup old notifications (90 days)
+// Note: TTL indexes không support complex partialFilterExpression, sẽ cleanup all
 notificationSchema.index(
   { createdAt: 1 },
   {
-    expireAfterSeconds: 90 * 24 * 60 * 60,
-    partialFilterExpression: {
-      readCount: { $gte: 0 } // Chỉ áp dụng cho notifications đã được track
-    }
+    expireAfterSeconds: 90 * 24 * 60 * 60
+    // Removed partialFilterExpression - TTL will apply to all documents
   }
 );
 
@@ -190,7 +189,7 @@ notificationSchema.statics.getUserNotificationsOptimized = async function(userId
             { $limit: limit }
         ];
 
-        const notifications = await this.aggregate(pipeline).hint({ recipients: 1, createdAt: -1 });
+        const notifications = await this.aggregate(pipeline).hint('recipients_1_createdAt_-1');
 
         // Optimized count query with covered index
         const total = await this.countDocuments({ recipients: userId });

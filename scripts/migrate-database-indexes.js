@@ -121,23 +121,21 @@ async function migrateDatabaseIndexes() {
             background: true
           },
           // Partial index cho active records
+          // Note: $ne operator not supported in partial indexes, using $eq instead
           {
             key: { userId: 1, read: 1, createdAt: -1 },
             name: 'userId_read_active_partial',
-            partialFilterExpression: { deleted: { $ne: true } },
-            background: true
-          },
-          // TTL index cho cleanup (180 days)
-          {
-            key: { createdAt: 1 },
-            name: 'createdAt_read_ttl',
-            expireAfterSeconds: 180 * 24 * 60 * 60,
-            partialFilterExpression: {
-              read: true,
-              deleted: { $ne: true }
-            },
+            partialFilterExpression: { deleted: false }, // Use $eq false instead of $ne true
             background: true
           }
+          // TTL index cho cleanup (180 days) - defined in schema
+          // Note: TTL indexes cannot use complex partialFilterExpression
+          // {
+          //   key: { createdAt: 1 },
+          //   name: 'createdAt_read_ttl',
+          //   expireAfterSeconds: 180 * 24 * 60 * 60,
+          //   background: true
+          // }
         ];
       }
 

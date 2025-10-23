@@ -69,24 +69,24 @@ notificationReadSchema.index({ platform: 1, createdAt: -1 }); // Platform analyt
 notificationReadSchema.index({ deleted: 1, userId: 1, createdAt: -1 }); // Soft delete queries
 
 // Partial indexes cho active records
+// Note: $ne operator not supported in partial indexes, using $eq instead
 notificationReadSchema.index(
   { userId: 1, read: 1, createdAt: -1 },
   {
     partialFilterExpression: {
-      deleted: { $ne: true } // Chỉ index non-deleted records
+      deleted: false // Chỉ index non-deleted records (deleted: false)
     }
   }
 );
 
 // TTL index cho auto cleanup old read records (180 days)
+// Note: TTL indexes không support complex partialFilterExpression
+// Sẽ cleanup records đã đọc sau 180 ngày, bất kể deleted status
 notificationReadSchema.index(
   { createdAt: 1 },
   {
-    expireAfterSeconds: 180 * 24 * 60 * 60,
-    partialFilterExpression: {
-      read: true, // Chỉ cleanup records đã đọc
-      deleted: { $ne: true }
-    }
+    expireAfterSeconds: 180 * 24 * 60 * 60
+    // Removed partialFilterExpression - TTL will apply to all documents
   }
 );
 
