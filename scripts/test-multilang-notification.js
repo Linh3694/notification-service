@@ -6,7 +6,7 @@
 const axios = require('axios');
 
 // Configuration
-const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:3001';
+const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5020';
 const TEST_GUARDIAN_ID = process.env.TEST_GUARDIAN_ID || 'G001'; // Thay bằng guardian ID thật để test
 
 async function testMultilangNotification() {
