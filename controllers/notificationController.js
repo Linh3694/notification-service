@@ -1605,6 +1605,50 @@ exports.sendAttendanceNotification = async (attendanceData) => {
 };
 
 /**
+ * Location translation mapping
+ */
+const LOCATION_TRANSLATIONS = {
+    // English → Vietnamese & English
+    'Gate 2': { vi: 'Cổng 2', en: 'Gate 2' },
+    'Gate 5': { vi: 'Cổng 5', en: 'Gate 5' },
+    'Main Gate': { vi: 'Cổng chính', en: 'Main Gate' },
+    'School Entrance': { vi: 'Lối vào trường', en: 'School Entrance' },
+    'Front Gate': { vi: 'Cổng trước', en: 'Front Gate' },
+    'Back Gate': { vi: 'Cổng sau', en: 'Back Gate' },
+    // Vietnamese → Vietnamese & English
+    'Cổng 2': { vi: 'Cổng 2', en: 'Gate 2' },
+    'Cổng 5': { vi: 'Cổng 5', en: 'Gate 5' },
+    'Cổng chính': { vi: 'Cổng chính', en: 'Main Gate' },
+    'Lối vào trường': { vi: 'Lối vào trường', en: 'School Entrance' },
+    'Cổng trước': { vi: 'Cổng trước', en: 'Front Gate' },
+    'Cổng sau': { vi: 'Cổng sau', en: 'Back Gate' }
+};
+
+/**
+ * Get localized location name
+ */
+function getLocalizedLocation(location) {
+    // Try exact match first
+    if (LOCATION_TRANSLATIONS[location]) {
+        return LOCATION_TRANSLATIONS[location];
+    }
+    
+    // Try case-insensitive match
+    const locationLower = location.toLowerCase();
+    for (const key in LOCATION_TRANSLATIONS) {
+        if (key.toLowerCase() === locationLower) {
+            return LOCATION_TRANSLATIONS[key];
+        }
+    }
+    
+    // No translation found, return default
+    return {
+        vi: location,
+        en: location
+    };
+}
+
+/**
  * Parse location từ device name
  * Examples:
  * "Gate 2 - Check In" → { location: "Gate 2", action: "Check In" }
@@ -1670,6 +1714,10 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
         const { location, action } = parseDeviceLocation(deviceName);
         console.log(`📍 [Notification Service] Parsed location: "${location}" from device: "${deviceName}"`);
 
+        // Step 3.5: Get localized location names
+        const localizedLocation = getLocalizedLocation(location);
+        console.log(`🌍 [Notification Service] Localized location:`, localizedLocation);
+
         // Step 4: Format time (chỉ lấy HH:mm)
         const time = new Date(timestamp).toLocaleString('vi-VN', {
             timeZone: 'Asia/Ho_Chi_Minh',
@@ -1683,9 +1731,9 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
         console.log(`📤 [Notification Service] Sending student attendance notification to ${recipients.length} guardian(s):`, recipients);
 
         // Step 6: Structured data cho frontend xử lý song ngữ
-        // Format message cho cả tiếng Việt và tiếng Anh
-        const messageVi = `${student.student_name} đã qua ${location} lúc ${time}`;
-        const messageEn = `${student.student_name} passed ${location} at ${time}`;
+        // Format message cho cả tiếng Việt và tiếng Anh với localized location
+        const messageVi = `${student.student_name} đã qua ${localizedLocation.vi} lúc ${time}`;
+        const messageEn = `${student.student_name} passed ${localizedLocation.en} at ${time}`;
         
         const notificationData = {
             // Gửi cả bản dịch để service worker có thể hiển thị ngay
@@ -1708,7 +1756,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
                 studentCode: student.student_code,
                 studentName: student.student_name,
                 time: time,
-                location: location, // đã parse từ device name
+                location: localizedLocation, // Object với {vi, en}
                 action: action, // Check In/Out hoặc Vào/Ra
                 timestamp: timestamp,
                 deviceName: deviceName, // giữ nguyên để debug
