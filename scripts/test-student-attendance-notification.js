@@ -5,6 +5,7 @@
  */
 
 require('dotenv').config({ path: '../config.env' });
+const mongoose = require('mongoose');
 const database = require('../config/database');
 const mysqlConnection = require('../config/mysqlConnection');
 const redisClient = require('../config/redis');
@@ -108,9 +109,10 @@ async function initializeConnections() {
   console.log('🔗 Initializing connections...\n');
 
   try {
-    // Initialize MongoDB connection
-    await database.connect();
-    console.log('✅ MongoDB connection initialized');
+    // Initialize Mongoose/MongoDB connection (like in app.js)
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/notification_service';
+    await mongoose.connect(mongoUri);
+    console.log('✅ Mongoose/MongoDB connection initialized');
 
     // Initialize MySQL connection pool
     await mysqlConnection.connect();
@@ -160,16 +162,36 @@ async function runTests() {
   process.exit(0);
 }
 
+// Cleanup connections
+async function cleanupConnections() {
+  console.log('\n🧹 Cleaning up connections...');
+  try {
+    await mongoose.disconnect();
+    await redisClient.quit();
+    console.log('✅ Connections cleaned up');
+  } catch (error) {
+    console.warn('⚠️ Error during cleanup:', error.message);
+  }
+}
+
 // Handle errors
-process.on('unhandledRejection', (error) => {
+process.on('unhandledRejection', async (error) => {
   console.error('❌ Unhandled rejection:', error);
+  await cleanupConnections();
   process.exit(1);
 });
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', async (error) => {
   console.error('❌ Uncaught exception:', error);
+  await cleanupConnections();
   process.exit(1);
 });
 
 // Run the tests
-runTests();
+runTests().then(async () => {
+  await cleanupConnections();
+}).catch(async (error) => {
+  console.error('❌ Test failed:', error);
+  await cleanupConnections();
+  process.exit(1);
+});
