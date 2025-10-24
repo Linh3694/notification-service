@@ -6,6 +6,7 @@
 
 require('dotenv').config({ path: '../config.env' });
 const database = require('../config/database');
+const mysqlConnection = require('../config/mysqlConnection');
 const redisClient = require('../config/redis');
 const notificationController = require('../controllers/notificationController');
 
@@ -107,9 +108,13 @@ async function initializeConnections() {
   console.log('🔗 Initializing connections...\n');
 
   try {
-    // Initialize database connections
+    // Initialize MongoDB connection
     await database.connect();
-    console.log('✅ Database connections initialized\n');
+    console.log('✅ MongoDB connection initialized');
+
+    // Initialize MySQL connection pool
+    await mysqlConnection.connect();
+    console.log('✅ MySQL connection pool initialized');
 
     // Initialize Redis connection
     await redisClient.connect();
