@@ -18,9 +18,9 @@ async function testStructuredKeysNotification() {
     // Test data - sử dụng structured keys như backend thực tế
     const notificationPayload = {
       title: 'attendance_notification_title', // Key để frontend translate
-      message: 'attendance_notification_gate_pass', // Key template
+      body: 'attendance_notification_gate_pass', // Key template (API expect 'body', not 'message')
       recipients: [`${TEST_GUARDIAN_ID}@parent.wellspring.edu.vn`],
-      notification_type: 'attendance',
+      type: 'attendance', // notification_type → type
       priority: 'high',
       channel: 'push',
       data: {
@@ -83,12 +83,12 @@ async function testMultilangObjectNotification() {
         vi: 'Điểm danh',
         en: 'Attendance'
       },
-      message: {
+      body: {
         vi: `Bạch Đăng Khôi đã qua Gate 2 lúc ${new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}`,
         en: `Bach Dang Khoi passed Gate 2 at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`
       },
       recipients: [`${TEST_GUARDIAN_ID}@parent.wellspring.edu.vn`],
-      notification_type: 'attendance',
+      type: 'attendance',
       priority: 'high',
       channel: 'push',
       data: {
