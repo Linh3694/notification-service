@@ -1683,9 +1683,23 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
         console.log(`📤 [Notification Service] Sending student attendance notification to ${recipients.length} guardian(s):`, recipients);
 
         // Step 6: Structured data cho frontend xử lý song ngữ
+        // Format message cho cả tiếng Việt và tiếng Anh
+        const messageVi = `${student.student_name} đã qua ${location} lúc ${time}`;
+        const messageEn = `${student.student_name} passed ${location} at ${time}`;
+        
         const notificationData = {
-            title: 'attendance_notification_title', // key để translate (flat)
-            message: 'attendance_notification_gate_pass', // key template (flat)
+            // Gửi cả bản dịch để service worker có thể hiển thị ngay
+            title: {
+                vi: 'Điểm danh',
+                en: 'Attendance'
+            },
+            message: {
+                vi: messageVi,
+                en: messageEn
+            },
+            // Giữ lại keys để frontend app có thể dùng
+            titleKey: 'attendance_notification_title',
+            messageKey: 'attendance_notification_gate_pass',
             recipients,
             notification_type: 'attendance',
             priority: 'high',

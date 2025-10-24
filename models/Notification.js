@@ -3,12 +3,11 @@ const mongoose = require('mongoose');
 // Schema cho notifications chính
 const notificationSchema = new mongoose.Schema({
     title: {
-        type: String,
-        required: true,
-        trim: true
+        type: mongoose.Schema.Types.Mixed, // Support both String and Object {vi, en}
+        required: true
     },
     message: {
-        type: String,
+        type: mongoose.Schema.Types.Mixed, // Support both String and Object {vi, en}
         required: true
     },
     type: {
