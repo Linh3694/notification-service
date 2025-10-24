@@ -5,7 +5,11 @@
 const axios = require('axios');
 
 const NOTIFICATION_SERVICE_URL = process.env.NOTIFICATION_SERVICE_URL || 'http://localhost:5001';
+// Thay đổi guardian ID này thành guardian thật của student WS12408014 (Bạch Đăng Khôi)
 const TEST_USER_ID = process.env.TEST_USER_ID || 'G001@parent.wellspring.edu.vn';
+
+console.log('⚠️ IMPORTANT: Make sure TEST_USER_ID matches the actual guardian of the student!');
+console.log('   Current test user:', TEST_USER_ID);
 
 async function testGetNotifications() {
   console.log('\n🧪 ========================================');

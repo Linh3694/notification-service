@@ -1753,6 +1753,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
             priority: 'high',
             channel: 'push',
             data: {
+                student_id: student.name, // Frappe docname for filtering
                 studentCode: student.student_code,
                 studentName: student.student_name,
                 time: time,
