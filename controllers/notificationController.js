@@ -1605,27 +1605,48 @@ exports.sendAttendanceNotification = async (attendanceData) => {
 };
 
 /**
+ * Parse location từ device name
+ * Examples:
+ * "Gate 2 - Check In" → { location: "Gate 2", action: "Check In" }
+ * "Gate 5 - Check Out" → { location: "Gate 5", action: "Check Out" }
+ * "Cổng 2 - Vào" → { location: "Cổng 2", action: "Vào" }
+ */
+function parseDeviceLocation(deviceName) {
+    if (!deviceName) return { location: 'cổng trường', action: null };
+
+    const parts = deviceName.split(' - ');
+    if (parts.length >= 2) {
+        const location = parts[0].trim();
+        const action = parts[1].trim();
+        return { location, action };
+    }
+
+    return { location: deviceName, action: null };
+}
+
+/**
  * Gửi thông báo chấm công học sinh đến phụ huynh
  * Khi học sinh check in/out tại cổng trường, gửi notification đến guardians
+ * Trả về structured data để frontend xử lý song ngữ
  */
 exports.sendStudentAttendanceNotification = async (attendanceData) => {
     try {
         const { employeeCode, employeeName, timestamp, deviceName, checkInTime, checkOutTime } = attendanceData;
-        
+
         console.log(`👨‍🎓 [Notification Service] Processing student attendance for: ${employeeCode} (${employeeName})`);
-        
+
         // Step 1: Check if employeeCode is a student
         const studentQuery = `SELECT name, student_name, student_code FROM \`tabCRM Student\` WHERE student_code = ? LIMIT 1`;
         const studentResult = await database.sqlQuery(studentQuery, [employeeCode]);
-        
+
         if (!studentResult || studentResult.length === 0) {
             console.log(`⚠️ [Notification Service] No student found with code: ${employeeCode}`);
             return;
         }
-        
+
         const student = studentResult[0];
         console.log(`✅ [Notification Service] Found student: ${student.student_name} (${student.student_code})`);
-        
+
         // Step 2: Get guardians for this student (bỏ điều kiện access = 1 để lấy tất cả guardians)
         const guardianQuery = `
             SELECT DISTINCT g.guardian_id, g.guardian_name, g.email, fr.access
@@ -1634,66 +1655,59 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
             WHERE fr.student = ?
         `;
         const guardians = await database.sqlQuery(guardianQuery, [student.name]);
-        
+
         if (!guardians || guardians.length === 0) {
             console.log(`⚠️ [Notification Service] No guardians found for student ${student.student_code}`);
             return;
         }
-        
-        console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s), access status:`, 
+
+        console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s), access status:`,
             guardians.map(g => ({ name: g.guardian_name, access: g.access })));
-        
+
         console.log(`👪 [Notification Service] Found ${guardians.length} guardian(s) for student ${student.student_name}`);
-        
-        // Step 3: Format time
-        const time = new Date(timestamp).toLocaleString('vi-VN', { 
+
+        // Step 3: Parse location từ device name
+        const { location, action } = parseDeviceLocation(deviceName);
+        console.log(`📍 [Notification Service] Parsed location: "${location}" from device: "${deviceName}"`);
+
+        // Step 4: Format time (chỉ lấy HH:mm)
+        const time = new Date(timestamp).toLocaleString('vi-VN', {
             timeZone: 'Asia/Ho_Chi_Minh',
             hour: '2-digit',
-            minute: '2-digit',
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
+            minute: '2-digit'
         });
-        
-        // Step 4: Determine check-in or check-out
-        // Logic: nếu chưa có checkInTime, hoặc có checkInTime và timestamp này gần với checkInTime hơn checkOutTime
-        const isCheckIn = !checkInTime || 
-            (checkInTime && checkOutTime && 
-             Math.abs(new Date(timestamp) - new Date(checkInTime)) < Math.abs(new Date(timestamp) - new Date(checkOutTime)));
-        
-        const action = isCheckIn ? 'vào trường' : 'ra khỏi trường';
-        const title = 'Điểm danh'; // Unified title for all attendance notifications
-        
-        const message = `${student.student_name} đã điểm danh lúc ${time} tại ${deviceName || 'cổng trường'}`;
-        
+
         // Step 5: Create guardian user emails (format: guardian_id@parent.wellspring.edu.vn)
         const recipients = guardians.map(g => `${g.guardian_id}@parent.wellspring.edu.vn`);
-        
+
         console.log(`📤 [Notification Service] Sending student attendance notification to ${recipients.length} guardian(s):`, recipients);
-        
+
+        // Step 6: Structured data cho frontend xử lý song ngữ
         const notificationData = {
-            title,
-            message,
+            title: 'attendance.notification.title', // key để translate
+            message: 'attendance.notification.gatePass', // key template
             recipients,
             notification_type: 'attendance',
             priority: 'high',
             channel: 'push',
-            data: { 
+            data: {
                 studentCode: student.student_code,
-                studentName: student.student_name, 
-                timestamp, 
-                deviceName,
+                studentName: student.student_name,
+                time: time,
+                location: location, // đã parse từ device name
+                action: action, // Check In/Out hoặc Vào/Ra
+                timestamp: timestamp,
+                deviceName: deviceName, // giữ nguyên để debug
                 checkInTime,
                 checkOutTime,
-                action,
-                isCheckIn,
-                notificationType: 'student_attendance' // Để phân biệt student vs employee
+                notificationType: 'student_attendance'
             }
         };
 
         await this.sendNotification(notificationData);
         console.log(`✅ [Notification Service] Sent student attendance notification to ${recipients.length} guardian(s)`);
-        
+        console.log(`📋 [Notification Service] Notification data:`, JSON.stringify(notificationData, null, 2));
+
     } catch (error) {
         console.error('❌ [Notification Service] Error sending student attendance notification:', error);
     }
