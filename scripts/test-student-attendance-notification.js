@@ -4,6 +4,9 @@
  * Chạy: node scripts/test-student-attendance-notification.js
  */
 
+require('dotenv').config({ path: '../config.env' });
+const database = require('../config/database');
+const redisClient = require('../config/redis');
 const notificationController = require('../controllers/notificationController');
 
 async function testStudentAttendanceNotification() {
@@ -99,9 +102,31 @@ async function testMultipleDeviceNames() {
   }
 }
 
+// Initialize connections
+async function initializeConnections() {
+  console.log('🔗 Initializing connections...\n');
+
+  try {
+    // Initialize database connections
+    await database.connect();
+    console.log('✅ Database connections initialized\n');
+
+    // Initialize Redis connection
+    await redisClient.connect();
+    console.log('✅ Redis connection initialized\n');
+
+  } catch (error) {
+    console.error('❌ Failed to initialize connections:', error);
+    process.exit(1);
+  }
+}
+
 // Run tests
 async function runTests() {
   console.log('🚀 Starting Student Attendance Notification Tests...\n');
+
+  // Initialize connections first
+  await initializeConnections();
 
   // Test với học sinh cụ thể
   await testStudentAttendanceNotification();
