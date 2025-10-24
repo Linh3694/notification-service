@@ -1684,8 +1684,8 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
 
         // Step 6: Structured data cho frontend xử lý song ngữ
         const notificationData = {
-            title: 'attendance.notification.title', // key để translate
-            message: 'attendance.notification.gatePass', // key template
+            title: 'attendance_notification_title', // key để translate (flat)
+            message: 'attendance_notification_gate_pass', // key template (flat)
             recipients,
             notification_type: 'attendance',
             priority: 'high',

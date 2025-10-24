@@ -142,22 +142,14 @@ async function runTests() {
   await testMultipleDeviceNames();
 
   console.log('\n🎉 All tests completed!');
-  console.log('\n📝 Frontend cần thêm vào locales:');
-  console.log('vi.json:');
-  console.log('  "attendance": {');
-  console.log('    "notification": {');
-  console.log('      "title": "Điểm danh",');
-  console.log('      "gatePass": "{{studentName}} đã qua {{location}} lúc {{time}}"');
-  console.log('    }');
-  console.log('  }');
+    console.log('\n📝 Frontend cần thêm vào locales:');
+    console.log('vi.json:');
+    console.log('  "attendance_notification_title": "Điểm danh",');
+    console.log('  "attendance_notification_gate_pass": "{{studentName}} đã qua {{location}} lúc {{time}}",');
 
-  console.log('\nen.json:');
-  console.log('  "attendance": {');
-  console.log('    "notification": {');
-  console.log('      "title": "Attendance",');
-  console.log('      "gatePass": "{{studentName}} passed {{location}} at {{time}}"');
-  console.log('    }');
-  console.log('  }');
+    console.log('\nen.json:');
+    console.log('  "attendance_notification_title": "Attendance",');
+    console.log('  "attendance_notification_gate_pass": "{{studentName}} passed {{location}} at {{time}}",');
 
   process.exit(0);
 }
