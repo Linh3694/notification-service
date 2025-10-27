@@ -23,7 +23,7 @@ const authenticate = async (req, res, next) => {
     // - Web app uses 'id' field
     // - Parent portal uses 'userId' field  
     // - Frappe JWT uses 'user' field (email)
-    const userId = decoded.id || decoded.userId || decoded.user || decoded.name;
+    const userId = decoded.id || decoded.userId || decoded.user || decoded.sub || decoded.email || decoded.name;
     
     if (!userId) {
       return res.status(401).json({ 
