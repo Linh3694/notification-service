@@ -39,6 +39,11 @@ const notificationSchema = new mongoose.Schema({
         required: true,
         default: 'notification-service'
     },
+    // Event timestamp - thời gian thực tế của event (cho attendance)
+    eventTimestamp: {
+        type: Date,
+        index: true
+    },
     // Analytics fields
     totalRecipients: {
         type: Number,

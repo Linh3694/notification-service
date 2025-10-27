@@ -211,8 +211,29 @@ exports.sendNotification = async (notificationData) => {
             }
         }
 
+        // Extract eventTimestamp từ data nếu có (cho attendance events)
+        let eventTimestamp = null;
+        let createdAt = undefined; // Let Mongoose set default
+        
+        if (data && data.timestamp) {
+            try {
+                eventTimestamp = new Date(data.timestamp);
+                // Validate timestamp không phải future
+                const now = new Date();
+                if (eventTimestamp > now) {
+                    console.warn('⚠️ [Notification Service] Event timestamp is in the future, using current time');
+                    eventTimestamp = now;
+                }
+                // Set createdAt = eventTimestamp để hiển thị đúng thời gian event
+                createdAt = eventTimestamp;
+                console.log('✅ [Notification Service] Using event timestamp:', eventTimestamp.toISOString());
+            } catch (error) {
+                console.error('❌ [Notification Service] Error parsing event timestamp:', error);
+            }
+        }
+
         // Tạo notification trong database
-        const notification = new Notification({
+        const notificationDoc = {
             title,
             message,
             type: notification_type || 'system',
@@ -222,7 +243,15 @@ exports.sendNotification = async (notificationData) => {
             recipients: recipientList,
             totalRecipients: recipientList.length,
             createdBy: 'notification-service'
-        });
+        };
+
+        // Thêm eventTimestamp và createdAt nếu có
+        if (eventTimestamp) {
+            notificationDoc.eventTimestamp = eventTimestamp;
+            notificationDoc.createdAt = createdAt;
+        }
+
+        const notification = new Notification(notificationDoc);
 
         await notification.save();
         console.log('✅ [Notification Service] Notification saved to database:', notification._id);
@@ -1546,40 +1575,117 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
 }
 
 /**
+ * Helper function để xác định time window của staff attendance
+ * Returns: { window: 'check-in' | 'lunch' | 'check-out', hour: number }
+ */
+function getAttendanceTimeWindow(timestamp) {
+    const eventTime = new Date(timestamp);
+    const hour = eventTime.getHours();
+    const minute = eventTime.getMinutes();
+    
+    // Lunch break: 12:00 - 13:00
+    if (hour === 12 || (hour === 13 && minute === 0)) {
+        return { window: 'lunch', hour };
+    }
+    
+    // Check-in window: 00:00 - 12:00
+    if (hour >= 0 && hour < 12) {
+        return { window: 'check-in', hour };
+    }
+    
+    // Check-out window: 13:00 - 23:59
+    return { window: 'check-out', hour };
+}
+
+/**
+ * Check if this is first attendance of the day for employee
+ * Uses Redis to track daily attendance records
+ */
+async function isFirstAttendanceOfDay(employeeCode, timestamp) {
+    try {
+        const eventDate = new Date(timestamp);
+        const dateKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD
+        const dailyAttendanceKey = `staff_attendance:${employeeCode}:${dateKey}`;
+        
+        const exists = await redisClient.client.exists(dailyAttendanceKey);
+        
+        if (!exists) {
+            // Set marker for today (expire at midnight)
+            const tomorrow = new Date(eventDate);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(0, 0, 0, 0);
+            const ttl = Math.floor((tomorrow - eventDate) / 1000); // Seconds until midnight
+            
+            await redisClient.client.set(dailyAttendanceKey, '1', 'EX', ttl);
+            return true;
+        }
+        
+        return false;
+    } catch (error) {
+        console.warn('⚠️ [Staff Attendance] Redis check failed:', error.message);
+        return true; // Default to first attendance if Redis fails
+    }
+}
+
+/**
  * Gửi thông báo chấm công cho nhân viên
- * Format: "Bạn đã chấm công lúc *Time* tại *Location*"
+ * Logic: 
+ * - First check-in of day → "Check-in at HH:mm at [location]"
+ * - Subsequent entries → "FaceID recorded at HH:mm at [location]"
+ * - Lunch break (12:00-13:00) → Skip notification
  */
 exports.sendAttendanceNotification = async (attendanceData) => {
     try {
         const { employeeCode, employeeName, timestamp, deviceName } = attendanceData;
         
-        // Convert employeeCode to userId using database lookup
+        console.log(`👔 [Staff Attendance] Processing for: ${employeeCode} (${employeeName})`);
+        
+        // Step 1: Check time window
+        const timeWindow = getAttendanceTimeWindow(timestamp);
+        console.log(`⏰ [Staff Attendance] Time window: ${timeWindow.window} (hour: ${timeWindow.hour})`);
+        
+        // Step 2: Skip lunch break notifications
+        if (timeWindow.window === 'lunch') {
+            console.log(`🍱 [Staff Attendance] Skipping lunch break notification for ${employeeCode}`);
+            return;
+        }
+        
+        // Step 3: Check if first attendance of day
+        const isFirstOfDay = await isFirstAttendanceOfDay(employeeCode, timestamp);
+        
+        // Step 4: Convert employeeCode to userId using database lookup
         const userId = await lookupUserIdByEmployeeCode(employeeCode);
         
         // Debug: Check if user has push tokens
         try {
             const pushTokens = await redisClient.getPushTokens(userId);
             const tokenCount = pushTokens ? Object.keys(pushTokens).length : 0;
-            console.log(`🔔 [Notification Service] Push tokens for userId ${userId}: ${tokenCount} tokens found`);
+            console.log(`🔔 [Staff Attendance] Push tokens for userId ${userId}: ${tokenCount} tokens found`);
             
             if (tokenCount === 0) {
-                console.log(`❌ [Notification Service] No push tokens found for userId ${userId} - user may not have the mobile app or not logged in`);
+                console.log(`❌ [Staff Attendance] No push tokens found for userId ${userId}`);
             }
         } catch (redisError) {
-            console.warn(`⚠️ [Notification Service] Redis error checking push tokens:`, redisError.message);
+            console.warn(`⚠️ [Staff Attendance] Redis error checking push tokens:`, redisError.message);
         }
         
-        // Format thời gian theo múi giờ Việt Nam
-        const time = new Date(timestamp).toLocaleString('vi-VN', { 
+        // Step 5: Format time with date
+        const eventTime = new Date(timestamp);
+        const time = eventTime.toLocaleString('vi-VN', { 
             timeZone: 'Asia/Ho_Chi_Minh',
             hour: '2-digit',
             minute: '2-digit',
             day: '2-digit',
-            month: '2-digit',
-            year: 'numeric'
+            month: '2-digit'
         });
         
-        const message = `Bạn đã chấm công lúc ${time} tại ${deviceName || 'Unknown Device'}`;
+        // Step 6: Create appropriate message based on context
+        let message;
+        if (isFirstOfDay) {
+            message = `Check-in lúc ${time} tại ${deviceName || 'Unknown Device'}`;
+        } else {
+            message = `FaceID ghi nhận lúc ${time} tại ${deviceName || 'Unknown Device'}`;
+        }
         
         const notificationData = {
             title: 'Chấm công',
@@ -1593,14 +1699,16 @@ exports.sendAttendanceNotification = async (attendanceData) => {
                 employeeName, 
                 timestamp, 
                 deviceName,
-                type: 'attendance'
+                timeWindow: timeWindow.window,
+                isFirstOfDay,
+                type: 'staff_attendance'
             }
         };
 
         await this.sendNotification(notificationData);
-        console.log(`✅ [Notification Service] Sent employee attendance notification to ${employeeCode} (userId: ${userId})`);
+        console.log(`✅ [Staff Attendance] Sent ${isFirstOfDay ? 'check-in' : 'subsequent'} notification to ${employeeCode} (userId: ${userId})`);
     } catch (error) {
-        console.error('❌ [Notification Service] Error sending employee attendance notification:', error);
+        console.error('❌ [Staff Attendance] Error sending notification:', error);
     }
 };
 
@@ -1679,6 +1787,26 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
 
         console.log(`👨‍🎓 [Notification Service] Processing student attendance for: ${employeeCode} (${employeeName})`);
 
+        // Step 0: Rate limiting - check duplicate notifications trong 5 phút
+        const rateLimitKey = `attendance_notif:${employeeCode}`;
+        const rateLimitWindow = 300000; // 5 phút = 300000ms
+        
+        try {
+            const lastNotificationTime = await redisClient.client.get(rateLimitKey);
+            if (lastNotificationTime) {
+                const timeSinceLastNotif = Date.now() - parseInt(lastNotificationTime);
+                if (timeSinceLastNotif < rateLimitWindow) {
+                    console.log(`⏱️ [Notification Service] Rate limited: Last notification sent ${Math.floor(timeSinceLastNotif/1000)}s ago for ${employeeCode}`);
+                    return; // Skip duplicate notification
+                }
+            }
+            // Set rate limit marker
+            await redisClient.client.set(rateLimitKey, Date.now().toString(), 'EX', 300); // Expire after 5 minutes
+        } catch (redisError) {
+            console.warn('⚠️ [Notification Service] Redis rate limit check failed, continuing:', redisError.message);
+            // Tiếp tục xử lý nếu Redis fail
+        }
+
         // Step 1: Check if employeeCode is a student
         const studentQuery = `SELECT name, student_name, student_code FROM \`tabCRM Student\` WHERE student_code = ? LIMIT 1`;
         const studentResult = await database.sqlQuery(studentQuery, [employeeCode]);
@@ -1718,9 +1846,12 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
         const localizedLocation = getLocalizedLocation(location);
         console.log(`🌍 [Notification Service] Localized location:`, localizedLocation);
 
-        // Step 4: Format time (chỉ lấy HH:mm)
-        const time = new Date(timestamp).toLocaleString('vi-VN', {
+        // Step 4: Format time - bao gồm cả ngày để rõ ràng hơn khi xem lại notifications cũ
+        const eventTime = new Date(timestamp);
+        const time = eventTime.toLocaleString('vi-VN', {
             timeZone: 'Asia/Ho_Chi_Minh',
+            day: '2-digit',
+            month: '2-digit',
             hour: '2-digit',
             minute: '2-digit'
         });
@@ -1732,7 +1863,7 @@ exports.sendStudentAttendanceNotification = async (attendanceData) => {
 
         // Step 6: Structured data cho frontend xử lý song ngữ
         // Format message cho cả tiếng Việt và tiếng Anh với localized location
-        const messageVi = `${student.student_name} đã qua ${localizedLocation.vi} lúc ${time}`;
+        const messageVi = `${student.student_name} đã qua ${localizedLocation.vi} vào ${time}`;
         const messageEn = `${student.student_name} passed ${localizedLocation.en} at ${time}`;
         
         const notificationData = {
