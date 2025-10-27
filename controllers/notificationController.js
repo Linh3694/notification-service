@@ -1535,21 +1535,10 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
     try {
         console.log(`🔍 [Notification Service] Looking up userId for employeeCode: ${employeeCode}`);
         
-        // Try to fetch from Frappe Employee doctype
-        const employeeQuery = `SELECT email FROM \`tabEmployee\` WHERE employee_id = ? OR name = ? LIMIT 1`;
-        const employeeResult = await database.sqlQuery(employeeQuery, [employeeCode, employeeCode]);
-        
-        if (employeeResult && employeeResult.length > 0) {
-            const email = employeeResult[0].email;
-            if (email) {
-                console.log(`✅ [Notification Service] Found Employee mapping: ${employeeCode} → ${email}`);
-                return email;
-            }
-        }
-        
-        // Fallback: Try User doctype with custom field
-        const userQuery = `SELECT name, email FROM \`tabUser\` WHERE employee_id = ? OR employee_code = ? OR name = ? LIMIT 1`;
-        const userResult = await database.sqlQuery(userQuery, [employeeCode, employeeCode, employeeCode]);
+        // Query User doctype - employee data is stored in Frappe Users
+        // Check employee_code (custom field) or name field
+        const userQuery = `SELECT name, email FROM \`tabUser\` WHERE employee_code = ? OR name = ? LIMIT 1`;
+        const userResult = await database.sqlQuery(userQuery, [employeeCode, employeeCode]);
         
         if (userResult && userResult.length > 0) {
             const user = userResult[0];
@@ -1558,7 +1547,7 @@ async function lookupUserIdByEmployeeCode(employeeCode) {
             return userId;
         }
         
-        // Final fallback: Check if employeeCode is already an email
+        // Fallback: Check if employeeCode is already an email
         if (employeeCode && employeeCode.includes('@')) {
             console.log(`✅ [Notification Service] EmployeeCode is already email: ${employeeCode}`);
             return employeeCode;
