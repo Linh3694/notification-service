@@ -686,15 +686,14 @@ class CrossServiceCommunication {
         checkOutTime
       });
       
-      // Note: sendStudentAttendanceNotification sẽ check xem có phải student không
-      // Nếu không phải student, nó sẽ không làm gì
-      // Để gửi cho employee, có thể uncomment dòng dưới nếu cần:
-      // await notificationController.sendAttendanceNotification({
-      //   employeeCode,
-      //   employeeName,
-      //   timestamp,
-      //   deviceName
-      // });
+      // Send notification for staff/employee attendance
+      // This will be called for both student and staff, but only staff will receive notifications
+      await notificationController.sendAttendanceNotification({
+        employeeCode,
+        employeeName,
+        timestamp,
+        deviceName
+      });
       
     } catch (error) {
       console.error('❌ [Notification Service] Error handling attendance recorded:', error);
