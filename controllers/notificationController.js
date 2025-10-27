@@ -106,7 +106,21 @@ const sendPushNotifications = async (pushTokens, title, body, data = {}) => {
                 webPushTokens.push(pushToken);
             }
             else {
-                console.warn(`⚠️ Unknown token format: ${pushToken.substring(0, 50)}...`);
+                // Handle if pushToken is an object (shouldn't happen after fix, but safety check)
+                if (typeof pushToken === 'object' && pushToken !== null) {
+                    console.warn(`⚠️ Token is object, extracting: ${JSON.stringify(pushToken).substring(0, 100)}...`);
+                    if (pushToken.token && Expo.isExpoPushToken(pushToken.token)) {
+                        expoMessages.push({
+                            to: pushToken.token,
+                            sound: 'default',
+                            title,
+                            body,
+                            data,
+                        });
+                    }
+                } else {
+                    console.warn(`⚠️ Unknown token format: ${typeof pushToken === 'string' ? pushToken.substring(0, 50) : typeof pushToken}...`);
+                }
             }
         }
 
@@ -340,7 +354,10 @@ async function sendPushNotificationsToUsers(userIds, title, message, data = {}) 
                 // Fallback to Redis (for mobile app tokens)
                 const userTokens = await redisClient.getPushTokens(userId);
                 if (userTokens && Object.keys(userTokens).length > 0) {
-                    tokens = Object.values(userTokens);
+                    // Extract token strings from device objects
+                    tokens = Object.values(userTokens)
+                        .map(device => device.token || device)
+                        .filter(token => token); // Remove null/undefined
                     console.log(`✅ [Notification Service] Using Redis tokens for ${userId}: ${tokens.length} token(s)`);
                 }
             }
