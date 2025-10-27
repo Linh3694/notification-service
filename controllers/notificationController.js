@@ -725,6 +725,8 @@ exports.sendTicketUpdateNotification = async (ticket, action, excludeUserId = nu
  */
 exports.registerDevice = async (req, res) => {
     try {
+        console.log('📥 [registerDevice] Received request body:', JSON.stringify(req.body, null, 2));
+        
         const {
             deviceToken,
             deviceId,
@@ -742,6 +744,8 @@ exports.registerDevice = async (req, res) => {
         } = req.body;
 
         const userId = req.user.name || req.user._id;
+        
+        console.log('📱 [registerDevice] Parsed platform:', platform, 'for user:', userId);
 
         // Validation based on platform
         if (platform === 'web') {
