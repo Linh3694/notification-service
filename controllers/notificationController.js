@@ -408,13 +408,34 @@ async function updateDeliveryStatus(notificationId, pushResults) {
  */
 async function broadcastNotificationToUsers(userIds, notification) {
     try {
-        // Sẽ được implement trong app.js với Socket.IO
         console.log('📡 [Notification Service] Broadcasting notification to users:', userIds.length);
         
-        // TODO: Implement Socket.IO broadcast
-        // io.to(userRoom).emit('new_notification', notification);
+        // Get io instance from app
+        const app = require('../app');
+        const io = app.io;
+        
+        if (!io) {
+            console.warn('⚠️ [Notification Service] Socket.IO instance not available');
+            return;
+        }
+        
+        // Convert Mongoose document to plain object if needed
+        const notificationData = notification.toObject ? notification.toObject() : notification;
+        
+        // Broadcast to each user's room
+        for (const userId of userIds) {
+            io.to(userId).emit('new_notification', {
+                ...notificationData,
+                _id: notificationData._id.toString(), // Ensure _id is string
+                timestamp: new Date().toISOString()
+            });
+            console.log(`📨 [Notification Service] Sent notification to user room: ${userId}`);
+        }
+        
+        console.log(`✅ [Notification Service] Broadcasted notification to ${userIds.length} users`);
+        
     } catch (error) {
-        console.error('Error broadcasting notification:', error);
+        console.error('❌ [Notification Service] Error broadcasting notification:', error);
     }
 }
 
