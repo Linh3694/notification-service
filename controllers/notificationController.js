@@ -206,7 +206,22 @@ const saveNotificationToDatabase = async (recipients, title, body, data = {}, ty
  */
 exports.sendNotification = async (notificationData) => {
     try {
-        const { title, message, recipients, notification_type, priority, channel, data } = notificationData;
+        const {
+            title,
+            message,
+            recipients,
+            notification_type,
+            priority = 'medium',
+            channel = 'push',
+            data = {}
+        } = notificationData;
+
+        // DEBUG: Log incoming notification
+        console.log('📨 [sendNotification] Incoming notification:');
+        console.log('   Title:', title);
+        console.log('   Type:', notification_type);
+        console.log('   Data type:', data.type || data.notificationType);
+        console.log('   Recipients:', recipients);
         
         console.log('📤 [Notification Service] Sending notification:', {
             title,
