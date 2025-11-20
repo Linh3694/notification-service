@@ -9,10 +9,12 @@ module.exports = {
     max_memory_restart: '1536M', // 💡 INCREASED: 1.5GB (1536MB) for safety margin
     env: {
       NODE_ENV: 'development',
-      PORT: 5001
+      PORT: 5001,
+      SERVICE_NAME: 'notification-service',
+      LOG_LEVEL: 'debug'
     },
     // Enhanced logging configuration
-    error_file: './logs/err.log',
+    error_file: './logs/error.log',
     out_file: './logs/out.log',
     log_file: './logs/combined.log',
     time: true,
@@ -30,6 +32,8 @@ module.exports = {
     env_production: {
       NODE_ENV: 'production',
       PORT: 5001,
+      SERVICE_NAME: 'notification-service',
+      LOG_LEVEL: 'info',
       // Disable debug logging in production
       DEBUG: false,
       // Enable clustering optimizations

@@ -7,12 +7,20 @@ class RedisClient {
     this.pubClient = null;
     this.subClient = null;
     this.isConnected = false;
+    this.isConnecting = false;
     this.connectionAttempts = 0;
     this.maxConnectionAttempts = 5;
     this.reconnectDelay = 5000; // 5 seconds
   }
 
   async connect() {
+    if (this.isConnecting) {
+      console.log('[Notification Service] Redis connection already in progress');
+      return;
+    }
+
+    this.isConnecting = true;
+
     try {
       // Main Redis client với reconnection strategy
       this.client = createClient({
@@ -82,10 +90,25 @@ class RedisClient {
 
       this.pubClient.on('error', (err) => {
         console.error('❌ [Notification Service] Redis PubClient Error:', err);
+        this.isConnected = false;
       });
 
       this.subClient.on('error', (err) => {
         console.error('❌ [Notification Service] Redis SubClient Error:', err);
+        this.isConnected = false;
+      });
+
+      this.client.on('ready', () => {
+        console.log('[Notification Service] Redis client ready');
+        this.isConnected = true;
+      });
+      this.pubClient.on('ready', () => {
+        console.log('[Notification Service] Redis pub ready');
+        this.isConnected = true;
+      });
+      this.subClient.on('ready', () => {
+        console.log('[Notification Service] Redis sub ready');
+        this.isConnected = true;
       });
 
       // Connect all clients
@@ -95,13 +118,15 @@ class RedisClient {
 
       // Test connection
       await this.client.ping();
-      
+
       this.isConnected = true;
       console.log('✅ [Notification Service] Redis connected successfully');
     } catch (error) {
       this.isConnected = false;
-      console.error('❌ [Notification Service] Redis connection failed:', error.message);
-      throw error;
+      console.warn('⚠️ [Notification Service] Redis connection failed, service will continue without Redis:', error.message);
+      // Don't throw error - Redis is optional
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -160,13 +185,18 @@ class RedisClient {
   }
 
   async set(key, value, ttl = null) {
+    if (!this.isConnected || !this.client) {
+      console.warn('[Notification Service] Redis not available, skipping set operation');
+      return;
+    }
+
     try {
       const stringValue = this._safeStringify(value, 'set');
       if (stringValue === null) {
         console.warn(`[Notification Service] Cannot stringify value for key: ${key}`);
         return;
       }
-      
+
       if (ttl) {
         await this.client.setEx(key, ttl, stringValue);
       } else {
@@ -174,15 +204,19 @@ class RedisClient {
       }
     } catch (error) {
       console.error(`[Notification Service] Error setting key ${key}:`, error);
-      throw error;
     }
   }
 
   async get(key) {
+    if (!this.isConnected || !this.client) {
+      console.warn('[Notification Service] Redis not available, skipping get operation');
+      return null;
+    }
+
     try {
       const value = await this.client.get(key);
       if (value === null) return null;
-      
+
       try {
         return JSON.parse(value);
       } catch {
@@ -190,20 +224,29 @@ class RedisClient {
       }
     } catch (error) {
       console.error(`[Notification Service] Error getting key ${key}:`, error);
-      throw error;
+      return null;
     }
   }
 
   async del(key) {
+    if (!this.isConnected || !this.client) {
+      console.warn('[Notification Service] Redis not available, skipping del operation');
+      return;
+    }
+
     try {
       await this.client.del(key);
     } catch (error) {
       console.error(`[Notification Service] Error deleting key ${key}:`, error);
-      throw error;
     }
   }
 
   async publish(channel, message) {
+    if (!this.isConnected || !this.pubClient) {
+      console.warn('[Notification Service] Redis not available, skipping publish operation');
+      return;
+    }
+
     try {
       const stringMessage = this._safeStringify(message, 'publish');
       if (stringMessage === null) {
@@ -213,11 +256,15 @@ class RedisClient {
       await this.pubClient.publish(channel, stringMessage);
     } catch (error) {
       console.error(`[Notification Service] Error publishing to channel ${channel}:`, error);
-      throw error;
     }
   }
 
   async subscribe(channel, callback) {
+    if (!this.isConnected || !this.subClient) {
+      console.warn('[Notification Service] Redis not available, skipping subscribe operation');
+      return;
+    }
+
     try {
       await this.subClient.subscribe(channel, (message) => {
         try {
@@ -229,7 +276,6 @@ class RedisClient {
       });
     } catch (error) {
       console.error(`[Notification Service] Error subscribing to channel ${channel}:`, error);
-      throw error;
     }
   }
 
@@ -296,51 +342,66 @@ class RedisClient {
 
   // Push token management - Enhanced for PWA & device tracking
   async storePushToken(userId, token, platform = 'web', deviceInfo = {}) {
-    const userIdStr = this._safeUserIdToString(userId, 'storePushToken');
-    const key = `push_tokens:${userIdStr}`;
+    if (!this.isConnected || !this.client) {
+      console.warn('[Notification Service] Redis not available, skipping storePushToken operation');
+      return null;
+    }
 
-    // Generate device ID if not provided
-    const deviceId = deviceInfo.deviceId || this._generateDeviceId();
+    try {
+      const userIdStr = this._safeUserIdToString(userId, 'storePushToken');
+      const key = `push_tokens:${userIdStr}`;
 
-    // Create structured token data
-    const tokenData = {
-      token: token,
-      platform: platform,
-      deviceId: deviceId,
-      deviceName: deviceInfo.deviceName || `Device ${deviceId.slice(-4)}`,
-      userAgent: deviceInfo.userAgent || '',
-      browser: deviceInfo.browser || 'Unknown',
-      os: deviceInfo.os || 'Unknown',
-      osVersion: deviceInfo.osVersion || '',
-      appVersion: deviceInfo.appVersion || '1.0.0',
-      language: deviceInfo.language || 'en',
-      timezone: deviceInfo.timezone || 'UTC',
-      isPWA: deviceInfo.isPWA || false,
-      isActive: true,
-      created: new Date().toISOString(),
-      lastActive: new Date().toISOString(),
-      pushSuccessCount: 0,
-      pushFailureCount: 0,
-      // For web push subscriptions
-      subscription: deviceInfo.subscription || null
-    };
+      // Generate device ID if not provided
+      const deviceId = deviceInfo.deviceId || this._generateDeviceId();
 
-    console.log(`📱 [storePushToken] Storing token for user ${userIdStr}, device ${deviceId}, platform ${platform}`);
-    await this.client.hSet(key, deviceId, JSON.stringify(tokenData));
+      // Create structured token data
+      const tokenData = {
+        token: token,
+        platform: platform,
+        deviceId: deviceId,
+        deviceName: deviceInfo.deviceName || `Device ${deviceId.slice(-4)}`,
+        userAgent: deviceInfo.userAgent || '',
+        browser: deviceInfo.browser || 'Unknown',
+        os: deviceInfo.os || 'Unknown',
+        osVersion: deviceInfo.osVersion || '',
+        appVersion: deviceInfo.appVersion || '1.0.0',
+        language: deviceInfo.language || 'en',
+        timezone: deviceInfo.timezone || 'UTC',
+        isPWA: deviceInfo.isPWA || false,
+        isActive: true,
+        created: new Date().toISOString(),
+        lastActive: new Date().toISOString(),
+        pushSuccessCount: 0,
+        pushFailureCount: 0,
+        // For web push subscriptions
+        subscription: deviceInfo.subscription || null
+      };
 
-    // Set expiration for the entire user key (30 days)
-    await this.client.expire(key, 30 * 24 * 60 * 60);
+      console.log(`📱 [storePushToken] Storing token for user ${userIdStr}, device ${deviceId}, platform ${platform}`);
+      await this.client.hSet(key, deviceId, JSON.stringify(tokenData));
 
-    return deviceId;
+      // Set expiration for the entire user key (30 days)
+      await this.client.expire(key, 30 * 24 * 60 * 60);
+
+      return deviceId;
+    } catch (error) {
+      console.error('[Notification Service] Error in storePushToken:', error.message);
+      return null;
+    }
   }
 
   async getPushTokens(userId) {
-    const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
-    const rawTokens = await this.client.hGetAll(key);
-
-    if (!rawTokens || Object.keys(rawTokens).length === 0) {
+    if (!this.isConnected || !this.client) {
+      console.warn('[Notification Service] Redis not available, returning empty push tokens');
       return null;
     }
+
+      const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
+      const rawTokens = await this.client.hGetAll(key);
+
+      if (!rawTokens || Object.keys(rawTokens).length === 0) {
+        return null;
+      }
 
     // Parse structured token data
     const parsedTokens = {};
@@ -388,6 +449,10 @@ class RedisClient {
 
     console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid active push token(s) for user: ${userId}`);
     return parsedTokens;
+    } catch (error) {
+      console.error('[Notification Service] Error in getPushTokens:', error.message);
+      return null;
+    }
   }
 
   // Enhanced device management methods

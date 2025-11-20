@@ -27,29 +27,32 @@ const io = new Server(server, {
   },
 });
 
-// Setup Redis adapter for Socket.IO clustering
+// Setup Redis adapter for Socket.IO clustering (optional)
 (async () => {
   try {
     console.log('🔗 [Notification Service] Setting up Redis adapter...');
     await redisClient.connect();
-    
-    io.adapter(createAdapter(redisClient.getPubClient(), redisClient.getSubClient()));
-    console.log('✅ [Notification Service] Redis adapter setup complete');
-    
-    // Subscribe user events channel (feature-flagged by ENABLE_USER_EVENTS)
-    try {
-      await redisClient.subscribeUserEvents();
-      console.log(`🔔 [Notification Service] Subscribed to user events channel: ${process.env.REDIS_USER_CHANNEL || 'user_events'}`);
-    } catch (e) {
-      console.warn('⚠️ [Notification Service] Failed to subscribe user events:', e.message);
+
+    if (redisClient.isRedisAvailable()) {
+      io.adapter(createAdapter(redisClient.getPubClient(), redisClient.getSubClient()));
+      console.log('✅ [Notification Service] Redis adapter setup complete');
+
+      // Subscribe user events channel (feature-flagged by ENABLE_USER_EVENTS)
+      try {
+        await redisClient.subscribeUserEvents();
+        console.log(`🔔 [Notification Service] Subscribed to user events channel: ${process.env.REDIS_USER_CHANNEL || 'user_events'}`);
+      } catch (e) {
+        console.warn('⚠️ [Notification Service] Failed to subscribe user events:', e.message);
+      }
+
+      // Initialize cross-service communication
+      await crossServiceCommunication.initializeSubscriptions();
+    } else {
+      console.log('ℹ️ [Notification Service] Redis not available, using default Socket.IO adapter');
     }
 
-    // Initialize cross-service communication
-    await crossServiceCommunication.initializeSubscriptions();
-    
   } catch (error) {
-    console.warn('⚠️ [Notification Service] Redis adapter setup failed:', error.message);
-    console.warn('⚠️ [Notification Service] Continuing without Redis adapter (single instance)');
+    console.warn('⚠️ [Notification Service] Redis adapter setup failed, using default adapter:', error.message);
   }
 })();
 
@@ -76,7 +79,7 @@ const connectDB = async () => {
 
 // Middleware
 const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000'],
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'https://wis-staging.wellspring.edu.vn', 'https://parentportal-staging.wellspring.edu.vn', 'https://parentportal.wellspring.edu.vn'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -95,37 +98,66 @@ app.use((req, res, next) => {
 
 // Health check endpoint
 app.get('/health', async (req, res) => {
+  const healthStatus = {
+    service: 'notification-service',
+    version: '1.0.0',
+    timestamp: new Date().toISOString()
+  };
+
   try {
-    // Check database connection
+    // Check database connection (critical)
     await database.query('SELECT 1');
-    
-    // Check Redis connection
-    const redisPing = await redisClient.ping();
-    
-    // Check notification queue length
-    const queueLength = await redisClient.getQueueLength();
-    
-    // Check cross-service communication health
-    const crossServiceHealth = await crossServiceCommunication.healthCheck();
-    
-    res.status(200).json({ 
-      status: 'ok', 
-      service: 'notification-service',
-      version: '1.0.0',
-      timestamp: new Date().toISOString(),
-      database: 'connected',
-      redis: redisPing ? 'connected' : 'disconnected',
-      queue_length: queueLength,
-      cross_service_communication: crossServiceHealth,
-      uptime: process.uptime()
-    });
+    healthStatus.database = 'connected';
   } catch (error) {
-    res.status(500).json({
-      status: 'error',
-      service: 'notification-service',
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
+    healthStatus.database = 'error';
+    healthStatus.database_error = error.message;
+  }
+
+  // Check Redis connection (optional)
+  try {
+    if (redisClient.isRedisAvailable() && redisClient.client) {
+      const redisPing = await redisClient.ping();
+      healthStatus.redis = redisPing ? 'connected' : 'unavailable';
+    } else {
+      healthStatus.redis = 'unavailable';
+      healthStatus.redis_note = 'Redis is optional, service continues to work without caching';
+    }
+
+    // Check notification queue length only if Redis is available
+    if (redisClient.isRedisAvailable()) {
+      const queueLength = await redisClient.getQueueLength();
+      healthStatus.queue_length = queueLength;
+    } else {
+      healthStatus.queue_length = 0;
+    }
+  } catch (error) {
+    healthStatus.redis = 'unavailable';
+    healthStatus.redis_note = 'Redis is optional, service continues to work without caching';
+    healthStatus.queue_length = 0;
+    healthStatus.redis_error = error.message;
+  }
+
+  // Check cross-service communication health
+  try {
+    const crossServiceHealth = await crossServiceCommunication.healthCheck();
+    healthStatus.cross_service_communication = crossServiceHealth;
+  } catch (error) {
+    healthStatus.cross_service_communication = 'error';
+    healthStatus.cross_service_error = error.message;
+  }
+
+  healthStatus.uptime = process.uptime();
+
+  // Determine overall status - only database is critical
+  if (healthStatus.database === 'error') {
+    healthStatus.status = 'error';
+    res.status(503).json(healthStatus);
+  } else if (healthStatus.redis === 'unavailable') {
+    healthStatus.status = 'degraded';
+    res.status(200).json(healthStatus); // Redis unavailable is not a critical error
+  } else {
+    healthStatus.status = 'ok';
+    res.status(200).json(healthStatus);
   }
 });
 
