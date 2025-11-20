@@ -396,6 +396,7 @@ class RedisClient {
       return null;
     }
 
+    try {
       const key = `push_tokens:${this._safeUserIdToString(userId, 'getPushTokens')}`;
       const rawTokens = await this.client.hGetAll(key);
 
@@ -403,52 +404,52 @@ class RedisClient {
         return null;
       }
 
-    // Parse structured token data
-    const parsedTokens = {};
-    for (const [deviceId, tokenData] of Object.entries(rawTokens)) {
-      try {
-        let token, deviceInfo;
+      // Parse structured token data
+      const parsedTokens = {};
+      for (const [deviceId, tokenData] of Object.entries(rawTokens)) {
+        try {
+          let token, deviceInfo;
 
-        if (tokenData.startsWith('ExponentPushToken[')) {
-          // Legacy raw token format (backward compatibility)
-          token = tokenData;
-          deviceInfo = {
-            platform: 'expo',
-            isActive: true,
-            deviceId: deviceId,
-            deviceName: `Legacy Device ${deviceId.slice(-4)}`
-          };
-          console.log(`📱 [getPushTokens] Device ${deviceId} using legacy raw token format for user ${userId}`);
-        } else {
-          // New structured JSON format
-          const parsedData = JSON.parse(tokenData);
-          token = parsedData.subscription ? JSON.stringify(parsedData.subscription) : parsedData.token;
-          deviceInfo = parsedData;
-          console.log(`📱 [getPushTokens] Device ${deviceId} using structured format for user ${userId} (${parsedData.platform})`);
+          if (tokenData.startsWith('ExponentPushToken[')) {
+            // Legacy raw token format (backward compatibility)
+            token = tokenData;
+            deviceInfo = {
+              platform: 'expo',
+              isActive: true,
+              deviceId: deviceId,
+              deviceName: `Legacy Device ${deviceId.slice(-4)}`
+            };
+            console.log(`📱 [getPushTokens] Device ${deviceId} using legacy raw token format for user ${userId}`);
+          } else {
+            // New structured JSON format
+            const parsedData = JSON.parse(tokenData);
+            token = parsedData.subscription ? JSON.stringify(parsedData.subscription) : parsedData.token;
+            deviceInfo = parsedData;
+            console.log(`📱 [getPushTokens] Device ${deviceId} using structured format for user ${userId} (${parsedData.platform})`);
+          }
+
+          // Only include active tokens
+          if (deviceInfo.isActive !== false) {
+            parsedTokens[deviceId] = {
+              token: token,
+              deviceInfo: deviceInfo
+            };
+          }
+
+        } catch (parseError) {
+          console.warn(`⚠️ [getPushTokens] Failed to parse token data for device ${deviceId} (user: ${userId}):`, parseError.message);
+          console.warn(`📄 Raw token data: ${tokenData.substring(0, 50)}...`);
+          continue;
         }
-
-        // Only include active tokens
-        if (deviceInfo.isActive !== false) {
-          parsedTokens[deviceId] = {
-            token: token,
-            deviceInfo: deviceInfo
-          };
-        }
-
-      } catch (parseError) {
-        console.warn(`⚠️ [getPushTokens] Failed to parse token data for device ${deviceId} (user: ${userId}):`, parseError.message);
-        console.warn(`📄 Raw token data: ${tokenData.substring(0, 50)}...`);
-        continue;
       }
-    }
 
-    if (Object.keys(parsedTokens).length === 0) {
-      console.log(`📱 [getPushTokens] No valid active push tokens found for user: ${userId}`);
-      return null;
-    }
+      if (Object.keys(parsedTokens).length === 0) {
+        console.log(`📱 [getPushTokens] No valid active push tokens found for user: ${userId}`);
+        return null;
+      }
 
-    console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid active push token(s) for user: ${userId}`);
-    return parsedTokens;
+      console.log(`📱 [getPushTokens] Found ${Object.keys(parsedTokens).length} valid active push token(s) for user: ${userId}`);
+      return parsedTokens;
     } catch (error) {
       console.error('[Notification Service] Error in getPushTokens:', error.message);
       return null;
